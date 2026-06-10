@@ -63,6 +63,13 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
         }
     }
 
+    // --- Unique Exercise Names for Autocomplete ---
+    val uniqueExerciseNames: Flow<List<String>> = workoutDao.getAllUniqueExerciseNames()
+
+    // --- Mapped days with planned exercises ---
+    val daysWithPlannedExercises: Flow<Set<Int>> = workoutDao.getAllPlannedExercises()
+        .map { list -> list.map { it.dayOfWeek }.toSet() }
+
     // --- Log Exercise Screen State ---
     private val _loggingExerciseName = MutableStateFlow("")
     val loggingExerciseName: StateFlow<String> = _loggingExerciseName.asStateFlow()
@@ -78,6 +85,10 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
 
     private val _sessionNotes = MutableStateFlow("")
     val sessionNotes: StateFlow<String> = _sessionNotes.asStateFlow()
+
+    // Custom logging date/timestamp state (null means Today / Current time)
+    private val _sessionTimestamp = MutableStateFlow<Long?>(null)
+    val sessionTimestamp: StateFlow<Long?> = _sessionTimestamp.asStateFlow()
 
     // Tracks total volume in current session for live display
     private val _currentVolume = MutableStateFlow(0.0)
@@ -101,9 +112,14 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
         _sessionNotes.value = notes
     }
 
+    fun updateSessionTimestamp(timestamp: Long?) {
+        _sessionTimestamp.value = timestamp
+    }
+
     fun startLogging(exerciseName: String) {
         _loggingExerciseName.value = exerciseName
         _sessionNotes.value = ""
+        _sessionTimestamp.value = null // reset custom timestamp
         currentSets.clear()
         viewModelScope.launch {
             val lastSession = workoutDao.getLastSessionWithSetsForExercise(exerciseName)
@@ -132,10 +148,19 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
 
     fun updateSetWeight(index: Int, weight: String) {
         if (index in currentSets.indices) {
+            // Allow only digits and at most one decimal point
+            val filtered = weight.filter { it.isDigit() || it == '.' }
+            val parts = filtered.split('.')
+            val sanitized = if (parts.size > 2) {
+                parts[0] + "." + parts.subList(1, parts.size).joinToString("")
+            } else {
+                filtered
+            }
+
             val prevBest = _personalBestWeight.value
-            val newWeight = weight.toDoubleOrNull() ?: 0.0
+            val newWeight = sanitized.toDoubleOrNull() ?: 0.0
             currentSets[index] = currentSets[index].copy(
-                weight = weight,
+                weight = sanitized,
                 isPersonalBest = prevBest > 0 && newWeight > prevBest
             )
             recalculateVolume()
@@ -144,7 +169,8 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
 
     fun updateSetReps(index: Int, reps: String) {
         if (index in currentSets.indices) {
-            currentSets[index] = currentSets[index].copy(reps = reps)
+            val sanitized = reps.filter { it.isDigit() }
+            currentSets[index] = currentSets[index].copy(reps = sanitized)
             recalculateVolume()
         }
     }
@@ -219,7 +245,7 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
         viewModelScope.launch {
             val session = WorkoutSession(
                 exerciseName = exerciseName,
-                timestamp = System.currentTimeMillis(),
+                timestamp = _sessionTimestamp.value ?: System.currentTimeMillis(),
                 notes = _sessionNotes.value.trim()
             )
 
@@ -248,6 +274,10 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
     private val _restTimerDuration = MutableStateFlow(90) // default 90s
     val restTimerDuration: StateFlow<Int> = _restTimerDuration.asStateFlow()
 
+    // Timer completion event flow (one-shot events)
+    private val _timerCompletedEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val timerCompletedEvent = _timerCompletedEvent.asSharedFlow()
+
     private var timerJob: Job? = null
 
     fun startRestTimer(seconds: Int = _restTimerDuration.value) {
@@ -261,6 +291,7 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
                 _restTimerSeconds.value -= 1
             }
             _restTimerRunning.value = false
+            _timerCompletedEvent.tryEmit(Unit)
         }
     }
 
@@ -277,24 +308,49 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
     // --- History & Stats ---
     val allSessions: Flow<List<SessionWithSets>> = workoutDao.getAllSessionsWithSets()
 
-    // Calculated metrics for the current week (last 7 days)
+    private fun getStartOfWeekTimestamp(): Long {
+        val calendar = Calendar.getInstance()
+        // Reset to start of day
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        
+        // Set to Monday of this week
+        // Calendar.DAY_OF_WEEK: Sunday = 1, Monday = 2, ..., Saturday = 7
+        val dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
+        val daysToSubtract = when (dayOfWeek) {
+            Calendar.MONDAY -> 0
+            Calendar.TUESDAY -> 1
+            Calendar.WEDNESDAY -> 2
+            Calendar.THURSDAY -> 3
+            Calendar.FRIDAY -> 4
+            Calendar.SATURDAY -> 5
+            Calendar.SUNDAY -> 6
+            else -> 0
+        }
+        calendar.add(Calendar.DAY_OF_YEAR, -daysToSubtract)
+        return calendar.timeInMillis
+    }
+
+    // Calculated metrics for the current calendar week (Monday to Sunday)
     val weeklyVolume: Flow<Double> = allSessions.map { sessions ->
-        val oneWeekAgo = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L)
-        sessions.filter { it.session.timestamp >= oneWeekAgo }
+        val startOfWeek = getStartOfWeekTimestamp()
+        sessions.filter { it.session.timestamp >= startOfWeek }
             .flatMap { it.sets }
             .sumOf { it.weight * it.reps }
     }
 
     val weeklySetCount: Flow<Int> = allSessions.map { sessions ->
-        val oneWeekAgo = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L)
-        sessions.filter { it.session.timestamp >= oneWeekAgo }
+        val startOfWeek = getStartOfWeekTimestamp()
+        sessions.filter { it.session.timestamp >= startOfWeek }
             .flatMap { it.sets }
             .size
     }
 
-    val weeklySessionCount: Flow<Int> = run {
-        val oneWeekAgo = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L)
-        workoutDao.getSessionCountSince(oneWeekAgo)
+    val weeklySessionCount: Flow<Int> = allSessions.map { sessions ->
+        val startOfWeek = getStartOfWeekTimestamp()
+        sessions.count { it.session.timestamp >= startOfWeek }
     }
 
     // Boolean list of active workout days in the current week (Index 0 = Monday, ..., 6 = Sunday)

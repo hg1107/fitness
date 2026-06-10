@@ -22,6 +22,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,6 +62,11 @@ fun HistoryScreen(
     val weeklySessionCount by viewModel.weeklySessionCount.collectAsState(initial = 0)
     val activeDays by viewModel.weeklyActiveDays.collectAsState(initial = List(7) { false })
     var sessionToDelete by remember { mutableStateOf<SessionWithSets?>(null) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filteredSessions = allSessions.filter {
+        it.session.exerciseName.contains(searchQuery, ignoreCase = true)
+    }
 
     Column(
         modifier = modifier
@@ -136,14 +143,47 @@ fun HistoryScreen(
         Spacer(modifier = Modifier.height(20.dp))
 
         // History Log Section
-        Text(
-            text = "Workout Logs",
-            fontSize = 17.sp,
-            fontWeight = FontWeight.Bold,
-            color = White
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Workout Logs",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                color = White
+            )
+            if (allSessions.isNotEmpty()) {
+                Text(
+                    text = "${filteredSessions.size} found",
+                    fontSize = 12.sp,
+                    color = MediumGray
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(10.dp))
+
+        if (allSessions.isNotEmpty()) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search exercises...", color = MediumGray, fontSize = 14.sp) },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = White,
+                    unfocusedTextColor = White,
+                    focusedBorderColor = BorderGray,
+                    unfocusedBorderColor = BorderGray,
+                    focusedContainerColor = CardGray,
+                    unfocusedContainerColor = CardGray
+                ),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp)
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
 
         Box(modifier = Modifier.weight(1f)) {
             if (allSessions.isEmpty()) {
@@ -167,12 +207,33 @@ fun HistoryScreen(
                         )
                     }
                 }
+            } else if (filteredSessions.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "No matching workouts",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = LightGray
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Try searching for a different exercise name",
+                            fontSize = 13.sp,
+                            color = MediumGray,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
-                    items(allSessions, key = { it.session.id }) { sessionWithSets ->
+                    items(filteredSessions, key = { it.session.id }) { sessionWithSets ->
                         ExpandableHistoryRow(
                             sessionWithSets = sessionWithSets,
                             onDelete = { sessionToDelete = sessionWithSets }

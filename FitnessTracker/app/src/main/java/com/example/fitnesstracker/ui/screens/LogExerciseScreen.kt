@@ -48,6 +48,12 @@ import com.example.fitnesstracker.ui.ChartMetric
 import com.example.fitnesstracker.ui.SetInputState
 import com.example.fitnesstracker.ui.WorkoutViewModel
 import kotlin.math.max
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,10 +73,24 @@ fun LogExerciseScreen(
     val restTimerDuration by viewModel.restTimerDuration.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     // Initialize state when screen loads
     LaunchedEffect(exerciseName) {
         viewModel.startLogging(exerciseName)
+    }
+
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(viewModel) {
+        viewModel.timerCompletedEvent.collect {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            delay(300)
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            snackbarHostState.showSnackbar(
+                message = "Rest finished! Time for the next set.",
+                duration = SnackbarDuration.Short
+            )
+        }
     }
 
     Scaffold(
@@ -146,17 +166,45 @@ fun LogExerciseScreen(
                     fontWeight = FontWeight.SemiBold,
                     color = LightGray
                 )
-                // Current session volume
-                val formattedVol = currentVolume.let {
-                    if (it % 1.0 == 0.0) "${it.toInt()} kg" else "${it} kg"
-                }
-                if (currentVolume > 0) {
-                    Text(
-                        text = "Vol: $formattedVol",
-                        fontSize = 13.sp,
-                        color = White,
-                        fontWeight = FontWeight.Bold
-                    )
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Custom date button
+                    val customTimestamp by viewModel.sessionTimestamp.collectAsState()
+                    val dateLabel = customTimestamp?.let {
+                        SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(it))
+                    } ?: "Today"
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(CardGray)
+                            .border(1.dp, BorderGray, RoundedCornerShape(6.dp))
+                            .clickable { showDatePicker = true }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = dateLabel,
+                            fontSize = 11.sp,
+                            color = LightGray,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    // Current session volume
+                    val formattedVol = currentVolume.let {
+                        if (it % 1.0 == 0.0) "${it.toInt()} kg" else "${it} kg"
+                    }
+                    if (currentVolume > 0) {
+                        Text(
+                            text = "Vol: $formattedVol",
+                            fontSize = 13.sp,
+                            color = White,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 
@@ -227,23 +275,24 @@ fun LogExerciseScreen(
                             "Rest ${formatTime(restTimerDuration)}"
                         }
 
-                        Box(
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(if (restTimerRunning) White else CardGray)
                                 .border(1.dp, BorderGray, RoundedCornerShape(6.dp))
-                                .clickable {
-                                    if (restTimerRunning) {
-                                        viewModel.stopRestTimer()
-                                    } else {
-                                        showTimerPresets = !showTimerPresets
-                                    }
-                                }
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            // Left part: timer label (start or stop)
+                            Box(
+                                modifier = Modifier
+                                    .clickable {
+                                        if (restTimerRunning) {
+                                            viewModel.stopRestTimer()
+                                        } else {
+                                            viewModel.startRestTimer()
+                                        }
+                                    }
+                                    .padding(start = 10.dp, end = if (restTimerRunning) 10.dp else 6.dp, top = 5.dp, bottom = 5.dp)
                             ) {
                                 Text(
                                     text = timerLabel,
@@ -251,7 +300,15 @@ fun LogExerciseScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = if (restTimerRunning) Black else LightGray
                                 )
-                                if (!restTimerRunning) {
+                            }
+                            
+                            // Right part: dropdown arrow (only visible when not running)
+                            if (!restTimerRunning) {
+                                Box(
+                                    modifier = Modifier
+                                        .clickable { showTimerPresets = !showTimerPresets }
+                                        .padding(start = 4.dp, end = 10.dp, top = 5.dp, bottom = 5.dp)
+                                ) {
                                     Text(
                                         text = "▾",
                                         fontSize = 10.sp,
@@ -400,6 +457,57 @@ fun LogExerciseScreen(
                 Text("Save Session", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = viewModel.sessionTimestamp.value ?: System.currentTimeMillis()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.updateSessionTimestamp(datePickerState.selectedDateMillis)
+                        showDatePicker = false
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = White)
+                ) {
+                    Text("OK", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDatePicker = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = LightGray)
+                ) {
+                    Text("Cancel")
+                }
+            },
+            colors = DatePickerDefaults.colors(
+                containerColor = CardGray
+            )
+        ) {
+            DatePicker(
+                state = datePickerState,
+                colors = DatePickerDefaults.colors(
+                    containerColor = CardGray,
+                    titleContentColor = White,
+                    headlineContentColor = White,
+                    weekdayContentColor = MediumGray,
+                    subheadContentColor = MediumGray,
+                    navigationContentColor = White,
+                    yearContentColor = LightGray,
+                    selectedYearContentColor = Black,
+                    selectedYearContainerColor = White,
+                    dayContentColor = LightGray,
+                    selectedDayContentColor = Black,
+                    selectedDayContainerColor = White,
+                    todayContentColor = White,
+                    todayDateBorderColor = White
+                )
+            )
         }
     }
 }
@@ -742,7 +850,7 @@ fun SetRow(
         OutlinedTextField(
             value = weightValue,
             onValueChange = onWeightChange,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
             placeholder = { Text("0", color = MediumGray, fontSize = 14.sp) },
             colors = OutlinedTextFieldDefaults.colors(

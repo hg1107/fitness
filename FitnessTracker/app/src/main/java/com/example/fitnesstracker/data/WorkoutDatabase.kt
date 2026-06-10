@@ -98,6 +98,14 @@ interface WorkoutDao {
     // Count distinct workout sessions in the current week
     @Query("SELECT COUNT(*) FROM workout_sessions WHERE timestamp >= :since")
     fun getSessionCountSince(since: Long): Flow<Int>
+
+    // Get all unique exercise names from plan and logs for autocomplete
+    @Query("SELECT DISTINCT exerciseName FROM (SELECT exerciseName FROM planned_exercises UNION SELECT exerciseName FROM workout_sessions) ORDER BY exerciseName ASC")
+    fun getAllUniqueExerciseNames(): Flow<List<String>>
+
+    // Get all planned exercises to find which days have workouts scheduled
+    @Query("SELECT * FROM planned_exercises")
+    fun getAllPlannedExercises(): Flow<List<PlannedExercise>>
 }
 
 @Database(

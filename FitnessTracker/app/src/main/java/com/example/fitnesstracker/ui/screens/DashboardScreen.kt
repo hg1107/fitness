@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -39,6 +40,8 @@ fun DashboardScreen(
 ) {
     val selectedDay by viewModel.selectedDay.collectAsState(initial = 1)
     val exercises by viewModel.plannedExercises.collectAsState(initial = emptyList())
+    val daysWithPlannedExercises by viewModel.daysWithPlannedExercises.collectAsState(initial = emptySet())
+    val exerciseSuggestions by viewModel.uniqueExerciseNames.collectAsState(initial = emptyList())
     var showAddDialog by remember { mutableStateOf(false) }
     var exerciseToDelete by remember { mutableStateOf<PlannedExercise?>(null) }
     val today = WorkoutViewModel.getCurrentDayOfWeek()
@@ -72,6 +75,7 @@ fun DashboardScreen(
         DayOfWeekSelector(
             selectedDay = selectedDay,
             todayDay = today,
+            daysWithPlannedExercises = daysWithPlannedExercises,
             onDaySelected = { viewModel.selectDay(it) }
         )
 
@@ -163,6 +167,7 @@ fun DashboardScreen(
 
     if (showAddDialog) {
         AddExerciseDialog(
+            suggestions = exerciseSuggestions,
             onDismiss = { showAddDialog = false },
             onConfirm = { name, muscle ->
                 viewModel.addPlannedExercise(name, muscle)
@@ -189,6 +194,7 @@ fun DashboardScreen(
 fun DayOfWeekSelector(
     selectedDay: Int,
     todayDay: Int,
+    daysWithPlannedExercises: Set<Int>,
     onDaySelected: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -203,6 +209,7 @@ fun DayOfWeekSelector(
             val dayNum = index + 1
             val isSelected = selectedDay == dayNum
             val isToday = todayDay == dayNum
+            val hasPlanned = daysWithPlannedExercises.contains(dayNum)
             
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -228,12 +235,19 @@ fun DayOfWeekSelector(
                         fontWeight = FontWeight.Bold
                     )
                 }
-                // Small dot under today's column
+                // Small dot under the day column: White if today, MediumGray if has planned exercises, Transparent otherwise
+                val indicatorColor = if (isToday) {
+                    White
+                } else if (hasPlanned) {
+                    MediumGray
+                } else {
+                    Color.Transparent
+                }
                 Box(
                     modifier = Modifier
                         .size(4.dp)
                         .clip(CircleShape)
-                        .background(if (isToday) White else Black)
+                        .background(indicatorColor)
                 )
             }
         }
@@ -304,6 +318,7 @@ fun ExercisePlanCard(
 
 @Composable
 fun AddExerciseDialog(
+    suggestions: List<String>,
     onDismiss: () -> Unit,
     onConfirm: (String, String) -> Unit
 ) {
@@ -342,6 +357,35 @@ fun AddExerciseDialog(
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                // Suggestion chips
+                val filteredSuggestions = suggestions.filter {
+                    it.contains(exerciseName, ignoreCase = true) && !it.equals(exerciseName, ignoreCase = true)
+                }.take(3)
+                if (filteredSuggestions.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        filteredSuggestions.forEach { suggestion ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(BorderGray)
+                                    .clickable { exerciseName = suggestion }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = suggestion,
+                                    color = LightGray,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
