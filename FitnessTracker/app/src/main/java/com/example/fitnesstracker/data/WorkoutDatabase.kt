@@ -106,15 +106,114 @@ interface WorkoutDao {
     // Get all planned exercises to find which days have workouts scheduled
     @Query("SELECT * FROM planned_exercises")
     fun getAllPlannedExercises(): Flow<List<PlannedExercise>>
+
+    // Get user profile to check unit settings (Metric vs Imperial)
+    @Query("SELECT * FROM user_profile WHERE id = 'default_user'")
+    suspend fun getUserProfileSync(): UserProfile?
+}
+
+@Entity(tableName = "activities")
+data class ActivityRecord(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val userId: String = "default_user",
+    val activityType: String, // "Running", "Walking", "Cycling"
+    val startTime: Long,
+    val endTime: Long,
+    val durationSeconds: Long,
+    val distanceMeters: Double,
+    val calories: Double,
+    val avgSpeed: Double, // meters/sec
+    val avgPace: Double,  // seconds/km
+    val notes: String = "",
+    val isSynced: Boolean = false
+)
+
+@Entity(
+    tableName = "activity_points",
+    foreignKeys = [
+        ForeignKey(
+            entity = ActivityRecord::class,
+            parentColumns = ["id"],
+            childColumns = ["activityId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("activityId")]
+)
+data class ActivityPoint(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val activityId: Long,
+    val latitude: Double,
+    val longitude: Double,
+    val timestamp: Long
+)
+
+@Entity(tableName = "user_profile")
+data class UserProfile(
+    @PrimaryKey val id: String = "default_user",
+    val name: String = "Athlete",
+    val age: Int = 30,
+    val weightKg: Double = 70.0,
+    val heightCm: Double = 175.0,
+    val preferredUnits: String = "Metric", // "Metric" or "Imperial"
+    val mapboxToken: String = ""
+)
+
+@Dao
+interface ActivityDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertActivity(activity: ActivityRecord): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertActivityPoints(points: List<ActivityPoint>)
+
+    @Query("SELECT * FROM activities ORDER BY startTime DESC")
+    fun getAllActivities(): Flow<List<ActivityRecord>>
+
+    @Query("SELECT * FROM activities WHERE id = :activityId")
+    suspend fun getActivityById(activityId: Long): ActivityRecord?
+
+    @Query("SELECT * FROM activity_points WHERE activityId = :activityId ORDER BY timestamp ASC")
+    fun getPointsForActivity(activityId: Long): Flow<List<ActivityPoint>>
+
+    @Query("SELECT * FROM activity_points WHERE activityId = :activityId ORDER BY timestamp ASC")
+    suspend fun getPointsForActivitySync(activityId: Long): List<ActivityPoint>
+
+    @Delete
+    suspend fun deleteActivity(activity: ActivityRecord)
+
+    @Query("UPDATE activities SET notes = :notes WHERE id = :id")
+    suspend fun updateActivityNotes(id: Long, notes: String)
+
+    @Query("UPDATE activities SET isSynced = 1 WHERE id IN (:ids)")
+    suspend fun markActivitiesAsSynced(ids: List<Long>)
+
+    // User Profile Queries
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertUserProfile(profile: UserProfile)
+
+    @Query("SELECT * FROM user_profile WHERE id = 'default_user'")
+    fun getUserProfile(): Flow<UserProfile?>
+
+    @Query("SELECT * FROM user_profile WHERE id = 'default_user'")
+    suspend fun getUserProfileSync(): UserProfile?
 }
 
 @Database(
-    entities = [PlannedExercise::class, WorkoutSession::class, WorkoutSet::class],
-    version = 2,
+    entities = [
+        PlannedExercise::class,
+        WorkoutSession::class,
+        WorkoutSet::class,
+        ActivityRecord::class,
+        ActivityPoint::class,
+        UserProfile::class
+    ],
+    version = 3,
     exportSchema = false
 )
 abstract class WorkoutDatabase : RoomDatabase() {
     abstract fun workoutDao(): WorkoutDao
+    abstract fun activityDao(): ActivityDao
 
     companion object {
         @Volatile
@@ -135,3 +234,4 @@ abstract class WorkoutDatabase : RoomDatabase() {
         }
     }
 }
+

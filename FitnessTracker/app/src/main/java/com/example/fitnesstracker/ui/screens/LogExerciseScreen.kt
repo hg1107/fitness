@@ -67,6 +67,7 @@ fun LogExerciseScreen(
     modifier: Modifier = Modifier
 ) {
     val previousSession by viewModel.previousSession.collectAsState()
+    val isImperial by viewModel.isImperial.collectAsState()
     val chartMetric by viewModel.chartMetric.collectAsState()
     val currentSets = viewModel.currentSets
     val sessionNotes by viewModel.sessionNotes.collectAsState()
@@ -219,7 +220,8 @@ fun LogExerciseScreen(
 
                     // Current session volume
                     val formattedVol = currentVolume.let {
-                        if (it % 1.0 == 0.0) "${it.toInt()} kg" else "${it} kg"
+                        val unit = if (isImperial) "lbs" else "kg"
+                        if (it % 1.0 == 0.0) "${it.toInt()} $unit" else String.format(java.util.Locale.US, "%.1f %s", it, unit)
                     }
                     if (currentVolume > 0) {
                         Text(
@@ -237,6 +239,7 @@ fun LogExerciseScreen(
             // Metric Toggle (Weight vs Reps)
             MetricToggle(
                 selectedMetric = chartMetric,
+                isImperial = isImperial,
                 onMetricSelected = { viewModel.setChartMetric(it) }
             )
 
@@ -255,7 +258,11 @@ fun LogExerciseScreen(
                         .padding(12.dp)
                 ) {
                     val previousValues = previousSession?.sets?.map {
-                        if (chartMetric == ChartMetric.WEIGHT) it.weight else it.reps.toDouble()
+                        if (chartMetric == ChartMetric.WEIGHT) {
+                            if (isImperial) com.example.fitnesstracker.util.UnitConverter.kgToLbs(it.weight) else it.weight
+                        } else {
+                            it.reps.toDouble()
+                        }
                     } ?: emptyList()
 
                     val currentValues = currentSets.map {
@@ -379,9 +386,7 @@ fun LogExerciseScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Table Headers
+            Spacer(modifier = Modifier.height(6.dp))            // Table Headers
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -390,12 +395,12 @@ fun LogExerciseScreen(
             ) {
                 Text("#", modifier = Modifier.width(32.dp), color = MediumGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Text("Last", modifier = Modifier.width(80.dp), color = MediumGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Text("kg", modifier = Modifier.weight(1f), color = MediumGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text(if (isImperial) "lbs" else "kg", modifier = Modifier.weight(1f), color = MediumGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Reps", modifier = Modifier.weight(1f), color = MediumGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.width(40.dp))
             }
-
+ 
             // Sets List
             LazyColumn(
                 modifier = Modifier.weight(1f),
@@ -405,7 +410,8 @@ fun LogExerciseScreen(
                 itemsIndexed(currentSets) { index, set ->
                     val lastSessionSet = previousSession?.sets?.getOrNull(index)
                     val lastSessionText = if (lastSessionSet != null) {
-                        val w = lastSessionSet.weight.let { if (it % 1.0 == 0.0) it.toInt().toString() else it.toString() }
+                        val displayWeight = if (isImperial) com.example.fitnesstracker.util.UnitConverter.kgToLbs(lastSessionSet.weight) else lastSessionSet.weight
+                        val w = displayWeight.let { if (it % 1.0 == 0.0) it.toInt().toString() else String.format(java.util.Locale.US, "%.1f", it) }
                         "${w}×${lastSessionSet.reps}"
                     } else {
                         "—"
@@ -640,6 +646,7 @@ private fun formatTime(seconds: Int): String {
 @Composable
 fun MetricToggle(
     selectedMetric: ChartMetric,
+    isImperial: Boolean,
     onMetricSelected: (ChartMetric) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -652,7 +659,7 @@ fun MetricToggle(
             .padding(2.dp)
     ) {
         val options = listOf(
-            ChartMetric.WEIGHT to "Weight (kg)",
+            ChartMetric.WEIGHT to if (isImperial) "Weight (lbs)" else "Weight (kg)",
             ChartMetric.REPS to "Reps"
         )
         

@@ -74,6 +74,9 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
     private val _loggingExerciseName = MutableStateFlow("")
     val loggingExerciseName: StateFlow<String> = _loggingExerciseName.asStateFlow()
 
+    private val _isImperial = MutableStateFlow(false)
+    val isImperial: StateFlow<Boolean> = _isImperial.asStateFlow()
+
     private val _previousSession = MutableStateFlow<SessionWithSets?>(null)
     val previousSession: StateFlow<SessionWithSets?> = _previousSession.asStateFlow()
 
@@ -120,8 +123,13 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
         _loggingExerciseName.value = exerciseName
         _sessionNotes.value = ""
         _sessionTimestamp.value = null // reset custom timestamp
+        _userStartedTimer.value = false // reset auto-start flag for new session
         currentSets.clear()
         viewModelScope.launch {
+            val profile = workoutDao.getUserProfileSync()
+            val imperial = profile?.preferredUnits == "Imperial"
+            _isImperial.value = imperial
+
             val lastSession = workoutDao.getLastSessionWithSetsForExercise(exerciseName)
             _previousSession.value = lastSession
 
@@ -131,10 +139,11 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
             // Pre-populate with standard sets if lastSession exists, else start with 1 empty set
             if (lastSession != null && lastSession.sets.isNotEmpty()) {
                 lastSession.sets.sortedBy { it.setIndex }.forEach { set ->
+                    val displayWeight = if (imperial) com.example.fitnesstracker.util.UnitConverter.kgToLbs(set.weight) else set.weight
                     currentSets.add(
                         SetInputState(
                             setIndex = set.setIndex,
-                            weight = set.weight.let { if (it % 1.0 == 0.0) it.toInt().toString() else it.toString() },
+                            weight = displayWeight.let { if (it % 1.0 == 0.0) it.toInt().toString() else String.format(java.util.Locale.US, "%.1f", it) },
                             reps = set.reps.toString()
                         )
                     )
@@ -157,7 +166,8 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
                 filtered
             }
 
-            val prevBest = _personalBestWeight.value
+            val imperial = _isImperial.value
+            val prevBest = if (imperial) com.example.fitnesstracker.util.UnitConverter.kgToLbs(_personalBestWeight.value) else _personalBestWeight.value
             val newWeight = sanitized.toDoubleOrNull() ?: 0.0
             currentSets[index] = currentSets[index].copy(
                 weight = sanitized,
@@ -187,6 +197,10 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
             )
         )
         recalculateVolume()
+        // Auto-start rest timer if user has already used it once in this session
+        if (_userStartedTimer.value && !_restTimerRunning.value) {
+            startRestTimer()
+        }
     }
 
     fun deleteSet(index: Int) {
@@ -204,13 +218,15 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
 
     fun copyPreviousSessionSets() {
         val lastSession = _previousSession.value
+        val imperial = _isImperial.value
         if (lastSession != null && lastSession.sets.isNotEmpty()) {
             currentSets.clear()
             lastSession.sets.sortedBy { it.setIndex }.forEach { set ->
+                val displayWeight = if (imperial) com.example.fitnesstracker.util.UnitConverter.kgToLbs(set.weight) else set.weight
                 currentSets.add(
                     SetInputState(
                         setIndex = set.setIndex,
-                        weight = set.weight.let { if (it % 1.0 == 0.0) it.toInt().toString() else it.toString() },
+                        weight = displayWeight.let { if (it % 1.0 == 0.0) it.toInt().toString() else String.format(java.util.Locale.US, "%.1f", it) },
                         reps = set.reps.toString()
                     )
                 )
@@ -242,6 +258,8 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
         }
         if (validSets.isEmpty()) return
 
+        val imperial = _isImperial.value
+
         viewModelScope.launch {
             val session = WorkoutSession(
                 exerciseName = exerciseName,
@@ -251,10 +269,12 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
 
             // Convert string inputs to numeric data types (fail-safe defaults)
             val sets = validSets.mapIndexed { idx, set ->
+                val enteredWeight = set.weight.toDoubleOrNull() ?: 0.0
+                val weightInKg = if (imperial) com.example.fitnesstracker.util.UnitConverter.lbsToKg(enteredWeight) else enteredWeight
                 WorkoutSet(
                     sessionId = 0, // Assigned inside room transaction
                     setIndex = idx,
-                    weight = set.weight.toDoubleOrNull() ?: 0.0,
+                    weight = weightInKg,
                     reps = set.reps.toIntOrNull() ?: 0
                 )
             }
@@ -274,6 +294,9 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
     private val _restTimerDuration = MutableStateFlow(90) // default 90s
     val restTimerDuration: StateFlow<Int> = _restTimerDuration.asStateFlow()
 
+    // Flag: true once the user has manually started the timer at least once in this session
+    private val _userStartedTimer = MutableStateFlow(false)
+
     // Timer completion event flow (one-shot events)
     private val _timerCompletedEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val timerCompletedEvent = _timerCompletedEvent.asSharedFlow()
@@ -282,6 +305,7 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
 
     fun startRestTimer(seconds: Int = _restTimerDuration.value) {
         timerJob?.cancel()
+        _userStartedTimer.value = true // mark that user has engaged the timer
         _restTimerDuration.value = seconds
         _restTimerSeconds.value = seconds
         _restTimerRunning.value = true
