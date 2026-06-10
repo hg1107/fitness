@@ -48,8 +48,11 @@ import com.example.fitnesstracker.ui.ChartMetric
 import com.example.fitnesstracker.ui.SetInputState
 import com.example.fitnesstracker.ui.WorkoutViewModel
 import kotlin.math.max
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import android.media.RingtoneManager
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -74,16 +77,37 @@ fun LogExerciseScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showDiscardDialog by remember { mutableStateOf(false) }
 
     // Initialize state when screen loads
     LaunchedEffect(exerciseName) {
         viewModel.startLogging(exerciseName)
     }
 
+    val handleBack = {
+        if (viewModel.hasValidSets()) {
+            showDiscardDialog = true
+        } else {
+            onNavigateBack()
+        }
+    }
+
+    BackHandler(enabled = true) {
+        handleBack()
+    }
+
+    val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     LaunchedEffect(viewModel) {
         viewModel.timerCompletedEvent.collect {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            try {
+                val notificationUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                val r = RingtoneManager.getRingtone(context, notificationUri)
+                r.play()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
             delay(300)
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             snackbarHostState.showSnackbar(
@@ -114,7 +138,7 @@ fun LogExerciseScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(onClick = handleBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
@@ -509,6 +533,39 @@ fun LogExerciseScreen(
                 )
             )
         }
+    }
+
+    if (showDiscardDialog) {
+        AlertDialog(
+            onDismissRequest = { showDiscardDialog = false },
+            title = { Text("Discard Changes?", color = White, fontWeight = FontWeight.Bold) },
+            text = { Text("You have entered sets for this exercise. Going back will discard your unsaved progress.", color = LightGray) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDiscardDialog = false
+                        onNavigateBack()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = White,
+                        contentColor = Black
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Discard", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDiscardDialog = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = LightGray)
+                ) {
+                    Text("Cancel", fontWeight = FontWeight.SemiBold)
+                }
+            },
+            containerColor = CardGray,
+            tonalElevation = 6.dp
+        )
     }
 }
 

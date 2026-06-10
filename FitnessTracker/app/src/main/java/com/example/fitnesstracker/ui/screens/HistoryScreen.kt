@@ -386,6 +386,22 @@ fun ExpandableHistoryRow(
                     }
                 }
 
+                if (sessionWithSets.session.notes.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Notes",
+                        color = MediumGray,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = sessionWithSets.session.notes,
+                        color = LightGray,
+                        fontSize = 13.sp
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Delete session button
