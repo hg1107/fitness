@@ -90,4 +90,7 @@ dependencies {
 
   // Material Icons
   implementation(libs.androidx.compose.material.icons.core)
+
+  // Gemini SDK
+  implementation(libs.google.generativeai)
 }

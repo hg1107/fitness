@@ -167,7 +167,14 @@ data class UserProfile(
     val onboardingComplete: Boolean = false,
     val foodLikes: String = "",
     val foodDislikes: String = "",
-    val foodAllergies: String = ""
+    val foodAllergies: String = "",
+    val budget: String = "Moderate",
+    val region: String = "Indian",
+    val preferredCuisine: String = "Punjabi",
+    val mealTimings: String = "Breakfast: 8 AM, Lunch: 1:30 PM, Dinner: 8:30 PM",
+    val gymSchedule: String = "Mon, Wed, Fri",
+    val availableFoodsAtHome: String = "eggs, milk, paneer, oats, banana, rice, roti",
+    val geminiApiKey: String = ""
 )
 
 @Entity(tableName = "food_items")
@@ -220,6 +227,14 @@ data class WaterLog(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val date: String, // YYYY-MM-DD
     val amountMl: Int
+)
+
+@Entity(tableName = "coach_messages")
+data class CoachMessage(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timestamp: Long,
+    val sender: String, // "user" or "coach"
+    val text: String
 )
 
 @Dao
@@ -323,6 +338,15 @@ interface NutritionDao {
 
     @Query("SELECT * FROM water_logs WHERE date = :date ORDER BY id DESC")
     fun getWaterLogsForDate(date: String): Flow<List<WaterLog>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCoachMessage(message: CoachMessage)
+
+    @Query("SELECT * FROM coach_messages ORDER BY timestamp ASC")
+    fun getAllCoachMessages(): Flow<List<CoachMessage>>
+
+    @Query("DELETE FROM coach_messages")
+    suspend fun clearAllCoachMessages()
 }
 
 @Database(
@@ -337,9 +361,10 @@ interface NutritionDao {
         FoodLog::class,
         SavedMeal::class,
         WeightLog::class,
-        WaterLog::class
+        WaterLog::class,
+        CoachMessage::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class WorkoutDatabase : RoomDatabase() {
