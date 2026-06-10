@@ -89,7 +89,7 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
         }
     }
 
-    // Personal best tracking: max single-set weight for the exercise ever
+    // Personal best tracking: all-time max weight for this exercise
     private val _personalBestWeight = MutableStateFlow(0.0)
     val personalBestWeight: StateFlow<Double> = _personalBestWeight.asStateFlow()
 
@@ -109,12 +109,12 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
             val lastSession = workoutDao.getLastSessionWithSetsForExercise(exerciseName)
             _previousSession.value = lastSession
 
-            // Compute personal best from last session
-            _personalBestWeight.value = lastSession?.sets?.maxOfOrNull { it.weight } ?: 0.0
+            // Compute all-time personal best weight for this exercise
+            _personalBestWeight.value = workoutDao.getMaxWeightForExercise(exerciseName) ?: 0.0
 
             // Pre-populate with standard sets if lastSession exists, else start with 1 empty set
             if (lastSession != null && lastSession.sets.isNotEmpty()) {
-                lastSession.sets.forEach { set ->
+                lastSession.sets.sortedBy { it.setIndex }.forEach { set ->
                     currentSets.add(
                         SetInputState(
                             setIndex = set.setIndex,
@@ -123,6 +123,7 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
                         )
                     )
                 }
+                recalculateVolume()
             } else {
                 currentSets.add(SetInputState(setIndex = 0, weight = "", reps = ""))
             }
@@ -179,7 +180,7 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
         val lastSession = _previousSession.value
         if (lastSession != null && lastSession.sets.isNotEmpty()) {
             currentSets.clear()
-            lastSession.sets.forEach { set ->
+            lastSession.sets.sortedBy { it.setIndex }.forEach { set ->
                 currentSets.add(
                     SetInputState(
                         setIndex = set.setIndex,
@@ -192,9 +193,28 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
         }
     }
 
+    /**
+     * Returns true if the current session has at least one set with valid (non-zero) data.
+     */
+    fun hasValidSets(): Boolean {
+        return currentSets.any {
+            val w = it.weight.toDoubleOrNull() ?: 0.0
+            val r = it.reps.toIntOrNull() ?: 0
+            w > 0 || r > 0
+        }
+    }
+
     fun saveSession(onSuccess: () -> Unit) {
         val exerciseName = _loggingExerciseName.value
         if (exerciseName.isBlank() || currentSets.isEmpty()) return
+
+        // Filter out completely empty sets (both weight and reps are 0 or blank)
+        val validSets = currentSets.filter {
+            val w = it.weight.toDoubleOrNull() ?: 0.0
+            val r = it.reps.toIntOrNull() ?: 0
+            w > 0 || r > 0
+        }
+        if (validSets.isEmpty()) return
 
         viewModelScope.launch {
             val session = WorkoutSession(
@@ -204,10 +224,10 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
             )
 
             // Convert string inputs to numeric data types (fail-safe defaults)
-            val sets = currentSets.map { set ->
+            val sets = validSets.mapIndexed { idx, set ->
                 WorkoutSet(
                     sessionId = 0, // Assigned inside room transaction
-                    setIndex = set.setIndex,
+                    setIndex = idx,
                     weight = set.weight.toDoubleOrNull() ?: 0.0,
                     reps = set.reps.toIntOrNull() ?: 0
                 )
@@ -272,6 +292,11 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
             .size
     }
 
+    val weeklySessionCount: Flow<Int> = run {
+        val oneWeekAgo = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L)
+        workoutDao.getSessionCountSince(oneWeekAgo)
+    }
+
     // Boolean list of active workout days in the current week (Index 0 = Monday, ..., 6 = Sunday)
     val weeklyActiveDays: Flow<List<Boolean>> = allSessions.map { sessions ->
         val activeDays = MutableList(7) { false }
@@ -301,6 +326,12 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
             }
         }
         activeDays
+    }
+
+    fun deleteSession(session: SessionWithSets) {
+        viewModelScope.launch {
+            workoutDao.deleteWorkoutSession(session.session)
+        }
     }
 
     fun getSessionsForExercise(exerciseName: String): Flow<List<SessionWithSets>> {

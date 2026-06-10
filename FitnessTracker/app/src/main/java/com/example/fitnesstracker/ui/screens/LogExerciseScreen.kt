@@ -67,7 +67,6 @@ fun LogExerciseScreen(
     val restTimerDuration by viewModel.restTimerDuration.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
-    var showTimerConfig by remember { mutableStateOf(false) }
 
     // Initialize state when screen loads
     LaunchedEffect(exerciseName) {
@@ -125,12 +124,14 @@ fun LogExerciseScreen(
                 enter = fadeIn() + expandVertically(),
                 exit = fadeOut() + shrinkVertically()
             ) {
-                RestTimerBanner(
-                    secondsLeft = restTimerSeconds,
-                    totalSeconds = restTimerDuration,
-                    onStop = { viewModel.stopRestTimer() }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+                Column {
+                    RestTimerBanner(
+                        secondsLeft = restTimerSeconds,
+                        totalSeconds = restTimerDuration,
+                        onStop = { viewModel.stopRestTimer() }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
             }
 
             // Chart Section
@@ -217,30 +218,70 @@ fun LogExerciseScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Rest Timer button
-                    val timerLabel = if (restTimerRunning) {
-                        formatTime(restTimerSeconds)
-                    } else {
-                        "Rest ${formatTime(restTimerDuration)}"
-                    }
+                    // Rest Timer button with dropdown presets
+                    var showTimerPresets by remember { mutableStateOf(false) }
+                    Box {
+                        val timerLabel = if (restTimerRunning) {
+                            formatTime(restTimerSeconds)
+                        } else {
+                            "Rest ${formatTime(restTimerDuration)}"
+                        }
 
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (restTimerRunning) White else CardGray)
-                            .border(1.dp, BorderGray, RoundedCornerShape(6.dp))
-                            .clickable {
-                                if (restTimerRunning) viewModel.stopRestTimer()
-                                else viewModel.startRestTimer()
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (restTimerRunning) White else CardGray)
+                                .border(1.dp, BorderGray, RoundedCornerShape(6.dp))
+                                .clickable {
+                                    if (restTimerRunning) {
+                                        viewModel.stopRestTimer()
+                                    } else {
+                                        showTimerPresets = !showTimerPresets
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = timerLabel,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (restTimerRunning) Black else LightGray
+                                )
+                                if (!restTimerRunning) {
+                                    Text(
+                                        text = "▾",
+                                        fontSize = 10.sp,
+                                        color = MediumGray
+                                    )
+                                }
                             }
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
-                    ) {
-                        Text(
-                            text = timerLabel,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (restTimerRunning) Black else LightGray
-                        )
+                        }
+
+                        DropdownMenu(
+                            expanded = showTimerPresets,
+                            onDismissRequest = { showTimerPresets = false },
+                            containerColor = CardGray
+                        ) {
+                            listOf(30, 60, 90, 120).forEach { seconds ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            formatTime(seconds),
+                                            color = if (seconds == restTimerDuration) White else LightGray,
+                                            fontWeight = if (seconds == restTimerDuration) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        showTimerPresets = false
+                                        viewModel.startRestTimer(seconds)
+                                    }
+                                )
+                            }
+                        }
                     }
 
                     if (previousSession != null) {

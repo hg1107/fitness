@@ -40,6 +40,7 @@ fun DashboardScreen(
     val selectedDay by viewModel.selectedDay.collectAsState(initial = 1)
     val exercises by viewModel.plannedExercises.collectAsState(initial = emptyList())
     var showAddDialog by remember { mutableStateOf(false) }
+    var exerciseToDelete by remember { mutableStateOf<PlannedExercise?>(null) }
     val today = WorkoutViewModel.getCurrentDayOfWeek()
 
     Column(
@@ -135,7 +136,7 @@ fun DashboardScreen(
                         ExercisePlanCard(
                             exercise = exercise,
                             onLog = { onLogExercise(exercise.exerciseName) },
-                            onDelete = { viewModel.deletePlannedExercise(exercise) }
+                            onDelete = { exerciseToDelete = exercise }
                         )
                     }
                 }
@@ -167,6 +168,19 @@ fun DashboardScreen(
                 viewModel.addPlannedExercise(name, muscle)
                 showAddDialog = false
             }
+        )
+    }
+
+    // Delete confirmation dialog
+    exerciseToDelete?.let { exercise ->
+        ConfirmDeleteDialog(
+            title = "Remove Exercise",
+            message = "Remove \"${exercise.exerciseName}\" from ${getDayShort(selectedDay)}?",
+            onConfirm = {
+                viewModel.deletePlannedExercise(exercise)
+                exerciseToDelete = null
+            },
+            onDismiss = { exerciseToDelete = null }
         )
     }
 }
@@ -404,5 +418,69 @@ private fun getDayShort(day: Int): String {
         6 -> "Sat"
         7 -> "Sun"
         else -> ""
+    }
+}
+
+@Composable
+fun ConfirmDeleteDialog(
+    title: String,
+    message: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = CardGray,
+            border = BorderStroke(1.dp, BorderGray),
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp)
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = White
+                )
+                
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = message,
+                    fontSize = 14.sp,
+                    color = LightGray
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.textButtonColors(contentColor = LightGray)
+                    ) {
+                        Text("Cancel", fontWeight = FontWeight.SemiBold)
+                    }
+                    
+                    Spacer(modifier = Modifier.width(8.dp))
+                    
+                    Button(
+                        onClick = onConfirm,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = White,
+                            contentColor = Black
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Delete", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 }

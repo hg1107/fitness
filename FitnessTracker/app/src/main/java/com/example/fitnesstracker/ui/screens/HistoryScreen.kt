@@ -15,7 +15,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -52,7 +57,9 @@ fun HistoryScreen(
     val allSessions by viewModel.allSessions.collectAsState(initial = emptyList())
     val weeklyVolume by viewModel.weeklyVolume.collectAsState(initial = 0.0)
     val weeklySetCount by viewModel.weeklySetCount.collectAsState(initial = 0)
+    val weeklySessionCount by viewModel.weeklySessionCount.collectAsState(initial = 0)
     val activeDays by viewModel.weeklyActiveDays.collectAsState(initial = List(7) { false })
+    var sessionToDelete by remember { mutableStateOf<SessionWithSets?>(null) }
 
     Column(
         modifier = modifier
@@ -93,24 +100,35 @@ fun HistoryScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Numeric aggregation summaries
+        // Numeric aggregation summaries — 3 stat cards
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             val formattedVolume = weeklyVolume.let {
-                if (it % 1.0 == 0.0) "${it.toInt()} kg" else "${it} kg"
+                if (it >= 1000) {
+                    val k = it / 1000.0
+                    if (k % 1.0 == 0.0) "${k.toInt()}k" else "%.1fk".format(k)
+                } else {
+                    if (it % 1.0 == 0.0) "${it.toInt()}" else "$it"
+                }
             }
             
             StatCard(
-                label = "Weekly Volume",
-                value = formattedVolume,
+                label = "Volume",
+                value = "${formattedVolume} kg",
                 modifier = Modifier.weight(1f)
             )
             
             StatCard(
-                label = "Sets Logged",
-                value = "$weeklySetCount sets",
+                label = "Sets",
+                value = "$weeklySetCount",
+                modifier = Modifier.weight(1f)
+            )
+
+            StatCard(
+                label = "Workouts",
+                value = "$weeklySessionCount",
                 modifier = Modifier.weight(1f)
             )
         }
@@ -154,18 +172,35 @@ fun HistoryScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
-                    items(allSessions) { sessionWithSets ->
-                        ExpandableHistoryRow(sessionWithSets = sessionWithSets)
+                    items(allSessions, key = { it.session.id }) { sessionWithSets ->
+                        ExpandableHistoryRow(
+                            sessionWithSets = sessionWithSets,
+                            onDelete = { sessionToDelete = sessionWithSets }
+                        )
                     }
                 }
             }
         }
+    }
+
+    // Delete confirmation dialog for logged sessions
+    sessionToDelete?.let { session ->
+        ConfirmDeleteDialog(
+            title = "Delete Workout",
+            message = "Delete this ${session.session.exerciseName} session? This cannot be undone.",
+            onConfirm = {
+                viewModel.deleteSession(session)
+                sessionToDelete = null
+            },
+            onDismiss = { sessionToDelete = null }
+        )
     }
 }
 
 @Composable
 fun ExpandableHistoryRow(
     sessionWithSets: SessionWithSets,
+    onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -290,7 +325,27 @@ fun ExpandableHistoryRow(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Delete session button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(32.dp),
+                        colors = IconButtonDefaults.iconButtonColors(contentColor = MediumGray)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete Session",
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
             }
         }
     }
@@ -373,12 +428,12 @@ fun WeeklyConsistencyTracker(
                     contentAlignment = Alignment.Center
                 ) {
                     if (isActive) {
-                        // Small dot to denote completion
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(Black)
+                        // Checkmark to denote completion
+                        Text(
+                            text = "✓",
+                            color = Black,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -405,18 +460,18 @@ fun StatCard(
             .clip(RoundedCornerShape(12.dp))
             .background(CardGray)
             .border(1.dp, BorderGray, RoundedCornerShape(12.dp))
-            .padding(16.dp)
+            .padding(12.dp)
     ) {
         Text(
             text = label,
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             color = MediumGray,
             fontWeight = FontWeight.SemiBold
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = value,
-            fontSize = 20.sp,
+            fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             color = White
         )

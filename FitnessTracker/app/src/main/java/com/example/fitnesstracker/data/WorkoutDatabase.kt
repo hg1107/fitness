@@ -86,6 +86,18 @@ interface WorkoutDao {
     @Transaction
     @Query("SELECT * FROM workout_sessions WHERE exerciseName = :exerciseName ORDER BY timestamp DESC")
     fun getAllSessionsForExercise(exerciseName: String): Flow<List<SessionWithSets>>
+
+    // Get the all-time max weight for a specific exercise across ALL sessions
+    @Query("SELECT MAX(ws.weight) FROM workout_sets ws INNER JOIN workout_sessions s ON ws.sessionId = s.id WHERE s.exerciseName = :exerciseName")
+    suspend fun getMaxWeightForExercise(exerciseName: String): Double?
+
+    // Delete a logged session (cascades to its sets via ForeignKey)
+    @Delete
+    suspend fun deleteWorkoutSession(session: WorkoutSession)
+
+    // Count distinct workout sessions in the current week
+    @Query("SELECT COUNT(*) FROM workout_sessions WHERE timestamp >= :since")
+    fun getSessionCountSince(since: Long): Flow<Int>
 }
 
 @Database(
