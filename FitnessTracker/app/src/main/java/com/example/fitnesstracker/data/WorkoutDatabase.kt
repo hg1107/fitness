@@ -61,6 +61,9 @@ interface WorkoutDao {
     @Delete
     suspend fun deletePlannedExercise(plannedExercise: PlannedExercise)
 
+    @Query("DELETE FROM planned_exercises WHERE exerciseName = :name")
+    suspend fun deletePlannedExercisesByName(name: String)
+
     // Log Session Queries
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWorkoutSession(session: WorkoutSession): Long
@@ -156,7 +159,67 @@ data class UserProfile(
     val weightKg: Double = 70.0,
     val heightCm: Double = 175.0,
     val preferredUnits: String = "Metric", // "Metric" or "Imperial"
-    val mapboxToken: String = ""
+    val mapboxToken: String = "",
+    val gender: String = "Male",
+    val fitnessGoal: String = "Weight Maintenance",
+    val activityLevel: String = "Moderately Active",
+    val dietaryPreference: String = "Non-Vegetarian",
+    val onboardingComplete: Boolean = false,
+    val foodLikes: String = "",
+    val foodDislikes: String = "",
+    val foodAllergies: String = ""
+)
+
+@Entity(tableName = "food_items")
+data class FoodItem(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val calories: Double,
+    val protein: Double,
+    val carbs: Double,
+    val fat: Double,
+    val fiber: Double = 0.0,
+    val servingSizeG: Double = 100.0,
+    val servingUnit: String = "g",
+    val isVegetarian: Boolean = true,
+    val isVegan: Boolean = false,
+    val allergens: String = ""
+)
+
+@Entity(tableName = "food_logs")
+data class FoodLog(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val date: String, // YYYY-MM-DD
+    val mealType: String, // "Breakfast", "Lunch", "Snack", "Dinner"
+    val foodName: String,
+    val calories: Double,
+    val protein: Double,
+    val carbs: Double,
+    val fat: Double,
+    val fiber: Double = 0.0,
+    val quantity: Double = 1.0,
+    val servingUnit: String = "g"
+)
+
+@Entity(tableName = "saved_meals")
+data class SavedMeal(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val mealName: String,
+    val foodLogsJson: String
+)
+
+@Entity(tableName = "weight_logs")
+data class WeightLog(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timestamp: Long,
+    val weightKg: Double
+)
+
+@Entity(tableName = "water_logs")
+data class WaterLog(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val date: String, // YYYY-MM-DD
+    val amountMl: Int
 )
 
 @Dao
@@ -199,6 +262,69 @@ interface ActivityDao {
     suspend fun getUserProfileSync(): UserProfile?
 }
 
+@Dao
+interface NutritionDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFoodItem(item: FoodItem)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFoodItems(items: List<FoodItem>)
+
+    @Query("SELECT * FROM food_items ORDER BY name ASC")
+    fun getAllFoodItems(): Flow<List<FoodItem>>
+
+    @Query("SELECT * FROM food_items WHERE name LIKE :query OR name LIKE '%' || :query || '%' ORDER BY name ASC")
+    fun searchFoodItems(query: String): Flow<List<FoodItem>>
+
+    @Query("SELECT * FROM food_items WHERE name = :name LIMIT 1")
+    suspend fun getFoodItemByName(name: String): FoodItem?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFoodLog(log: FoodLog)
+
+    @Delete
+    suspend fun deleteFoodLog(log: FoodLog)
+
+    @Query("SELECT * FROM food_logs WHERE date = :date ORDER BY id ASC")
+    fun getFoodLogsForDate(date: String): Flow<List<FoodLog>>
+
+    @Query("SELECT * FROM food_logs ORDER BY date DESC")
+    fun getAllFoodLogs(): Flow<List<FoodLog>>
+
+    @Query("SELECT * FROM water_logs ORDER BY date DESC")
+    fun getAllWaterLogs(): Flow<List<WaterLog>>
+
+    @Query("SELECT DISTINCT foodName FROM food_logs ORDER BY id DESC LIMIT 20")
+    fun getRecentFoods(): Flow<List<String>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSavedMeal(meal: SavedMeal)
+
+    @Query("SELECT * FROM saved_meals ORDER BY mealName ASC")
+    fun getAllSavedMeals(): Flow<List<SavedMeal>>
+
+    @Delete
+    suspend fun deleteSavedMeal(meal: SavedMeal)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertWeightLog(log: WeightLog)
+
+    @Query("SELECT * FROM weight_logs ORDER BY timestamp DESC")
+    fun getAllWeightLogs(): Flow<List<WeightLog>>
+
+    @Query("SELECT * FROM weight_logs ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLatestWeightLogSync(): WeightLog?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertWaterLog(log: WaterLog)
+
+    @Query("SELECT SUM(amountMl) FROM water_logs WHERE date = :date")
+    fun getWaterAmountForDate(date: String): Flow<Int?>
+
+    @Query("SELECT * FROM water_logs WHERE date = :date ORDER BY id DESC")
+    fun getWaterLogsForDate(date: String): Flow<List<WaterLog>>
+}
+
 @Database(
     entities = [
         PlannedExercise::class,
@@ -206,14 +332,20 @@ interface ActivityDao {
         WorkoutSet::class,
         ActivityRecord::class,
         ActivityPoint::class,
-        UserProfile::class
+        UserProfile::class,
+        FoodItem::class,
+        FoodLog::class,
+        SavedMeal::class,
+        WeightLog::class,
+        WaterLog::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class WorkoutDatabase : RoomDatabase() {
     abstract fun workoutDao(): WorkoutDao
     abstract fun activityDao(): ActivityDao
+    abstract fun nutritionDao(): NutritionDao
 
     companion object {
         @Volatile

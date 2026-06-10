@@ -42,6 +42,11 @@ import com.example.fitnesstracker.theme.MediumGray
 import com.example.fitnesstracker.theme.White
 import com.example.fitnesstracker.ui.WorkoutViewModel
 import com.example.fitnesstracker.ui.ActivityViewModel
+import com.example.fitnesstracker.ui.NutritionViewModel
+import com.example.fitnesstracker.data.FoodLog
+import com.example.fitnesstracker.data.WaterLog
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -50,10 +55,11 @@ import java.util.Locale
 fun HistoryScreen(
     workoutViewModel: WorkoutViewModel,
     activityViewModel: ActivityViewModel,
+    nutritionViewModel: NutritionViewModel,
     onViewActivityDetail: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var selectedTab by remember { mutableStateOf(0) } // 0 = Gym Logs, 1 = GPS Tracking
+    var selectedTab by remember { mutableStateOf(0) } // 0 = Workouts, 1 = Activities, 2 = Analysis
     val userProfile by activityViewModel.userProfile.collectAsState()
     val isImperial = userProfile.preferredUnits == "Imperial"
 
@@ -82,7 +88,7 @@ fun HistoryScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Dual Segmented Tab Control
+        // 3-Way Segmented Tab Control
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -101,9 +107,9 @@ fun HistoryScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Gym Logs",
+                    text = "Workouts",
                     color = if (selectedTab == 0) Black else LightGray,
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -117,9 +123,25 @@ fun HistoryScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "GPS Tracking",
+                    text = "Activities",
                     color = if (selectedTab == 1) DarkBackground else LightGray,
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(if (selectedTab == 2) White else Color.Transparent)
+                    .clickable { selectedTab = 2 }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Analysis",
+                    color = if (selectedTab == 2) Black else LightGray,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -127,10 +149,10 @@ fun HistoryScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        if (selectedTab == 0) {
-            GymLogsSection(workoutViewModel, isImperial)
-        } else {
-            GpsTrackingSection(activityViewModel, isImperial, onViewActivityDetail)
+        when (selectedTab) {
+            0 -> GymLogsSection(workoutViewModel, isImperial)
+            1 -> GpsTrackingSection(activityViewModel, isImperial, onViewActivityDetail)
+            2 -> WeeklyAnalysisSection(workoutViewModel, activityViewModel, nutritionViewModel, isImperial)
         }
     }
 }
@@ -516,7 +538,8 @@ fun GpsTrackingSection(
                             ActivityRowItem(
                                 activity = activity,
                                 isImperial = isImperial,
-                                onClick = { onViewActivityDetail(activity.id) }
+                                onClick = { onViewActivityDetail(activity.id) },
+                                onDelete = { activityToDelete = activity }
                             )
                         }
                     }
@@ -546,6 +569,7 @@ fun ActivityRowItem(
     activity: ActivityRecord,
     isImperial: Boolean,
     onClick: () -> Unit,
+    onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val date = Date(activity.startTime)
@@ -623,6 +647,18 @@ fun ActivityRowItem(
                     text = durationString,
                     color = MutedText,
                     fontSize = 12.sp
+                )
+            }
+
+            IconButton(
+                onClick = { onDelete() },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Delete Log",
+                    tint = Color(0xFFEF5350),
+                    modifier = Modifier.size(18.dp)
                 )
             }
 
@@ -960,5 +996,276 @@ private fun GymLogsConfirmDeleteDialog(
         containerColor = CardGray,
         textContentColor = LightGray
     )
+}
+
+@Composable
+fun WeeklyAnalysisSection(
+    workoutViewModel: WorkoutViewModel,
+    activityViewModel: ActivityViewModel,
+    nutritionViewModel: NutritionViewModel,
+    isImperial: Boolean
+) {
+    val userProfileState by nutritionViewModel.userProfile.collectAsState(initial = null)
+    
+    // Gym weekly states
+    val weeklyVolume by workoutViewModel.weeklyVolume.collectAsState(initial = 0.0)
+    val weeklySetCount by workoutViewModel.weeklySetCount.collectAsState(initial = 0)
+    val weeklySessionCount by workoutViewModel.weeklySessionCount.collectAsState(initial = 0)
+    val activeDays by workoutViewModel.weeklyActiveDays.collectAsState(initial = List(7) { false })
+
+    // Activity weekly states
+    val weeklyDistanceKm by activityViewModel.weeklyDistanceKm.collectAsState(initial = 0.0)
+    val weeklyDurationHours by activityViewModel.weeklyDurationHours.collectAsState(initial = 0.0)
+    val weeklyCaloriesBurned by activityViewModel.weeklyCaloriesBurned.collectAsState(initial = 0.0)
+    val weeklyWorkoutsCount by activityViewModel.weeklyWorkoutsCount.collectAsState(initial = 0)
+
+    // Nutrition weekly states
+    val weeklyFoodLogs by nutritionViewModel.weeklyFoodLogs.collectAsState(initial = emptyList())
+    val weeklyWaterLogs by nutritionViewModel.weeklyWaterLogs.collectAsState(initial = emptyList())
+
+    val profile = userProfileState ?: return
+
+    val goal = nutritionViewModel.calculateGoal(
+        gender = profile.gender,
+        age = profile.age,
+        weightKg = profile.weightKg,
+        heightCm = profile.heightCm,
+        activityLevel = profile.activityLevel,
+        fitnessGoal = profile.fitnessGoal
+    )
+
+    // Compute averages
+    val logsByDate = weeklyFoodLogs.groupBy { it.date }
+    val loggedDaysCount = logsByDate.size.coerceAtLeast(1)
+
+    val totalCalories = weeklyFoodLogs.sumOf { it.calories * it.quantity }
+    val totalProtein = weeklyFoodLogs.sumOf { it.protein * it.quantity }
+    val totalCarbs = weeklyFoodLogs.sumOf { it.carbs * it.quantity }
+    val totalFat = weeklyFoodLogs.sumOf { it.fat * it.quantity }
+
+    val avgCalories = totalCalories / loggedDaysCount
+    val avgProtein = totalProtein / loggedDaysCount
+    val avgCarbs = totalCarbs / loggedDaysCount
+    val avgFat = totalFat / loggedDaysCount
+
+    // Goal Compliance
+    val compliantDays = logsByDate.filter { (_, logs) ->
+        val dailyCals = logs.sumOf { it.calories * it.quantity }
+        if (profile.fitnessGoal == "Fat Loss") {
+            dailyCals <= goal.calories + 100
+        } else {
+            dailyCals in (goal.calories - 150)..(goal.calories + 250)
+        }
+    }.size
+    val compliancePct = if (logsByDate.isNotEmpty()) (compliantDays * 100) / logsByDate.size else 0
+
+    // Water average
+    val waterByDate = weeklyWaterLogs.groupBy { it.date }
+    val waterDaysCount = waterByDate.size.coerceAtLeast(1)
+    val totalWater = weeklyWaterLogs.sumOf { it.amountMl }
+    val avgWaterL = (totalWater / waterDaysCount) / 1000.0
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 80.dp)
+    ) {
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = "This Week's Progress Report",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = White
+        )
+        Text(
+            text = "Summary of gym workouts, tracking, and diet goals",
+            fontSize = 12.sp,
+            color = MediumGray
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Weekday Consistency
+        Text("Workout Consistency", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = LightGray)
+        Spacer(modifier = Modifier.height(8.dp))
+        WeeklyConsistencyTracker(activeDays = activeDays)
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Card 1: Gym Workouts Progress
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = CardGray),
+            border = BorderStroke(1.dp, BorderGray)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Strength Workouts", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = StravaOrange)
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    val volumeVal = if (isImperial) com.example.fitnesstracker.util.UnitConverter.kgToLbs(weeklyVolume) else weeklyVolume
+                    val volUnit = if (isImperial) "lbs" else "kg"
+                    Column {
+                        Text("Volume", fontSize = 11.sp, color = MediumGray)
+                        Text("${volumeVal.toInt()} $volUnit", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = White)
+                    }
+                    Column {
+                        Text("Sets Completed", fontSize = 11.sp, color = MediumGray)
+                        Text("$weeklySetCount sets", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = White)
+                    }
+                    Column {
+                        Text("Sessions", fontSize = 11.sp, color = MediumGray)
+                        Text("$weeklySessionCount", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = White)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Card 2: GPS Activities Progress
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = CardGray),
+            border = BorderStroke(1.dp, BorderGray)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Cardio & GPS Tracking", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00E676))
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    val distVal = if (isImperial) weeklyDistanceKm * 0.621371 else weeklyDistanceKm
+                    val distUnit = if (isImperial) "mi" else "km"
+                    Column {
+                        Text("Distance", fontSize = 11.sp, color = MediumGray)
+                        Text(String.format(Locale.US, "%.1f %s", distVal, distUnit), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = White)
+                    }
+                    Column {
+                        Text("Duration", fontSize = 11.sp, color = MediumGray)
+                        Text(String.format(Locale.US, "%.1f hrs", weeklyDurationHours), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = White)
+                    }
+                    Column {
+                        Text("Energy Burned", fontSize = 11.sp, color = MediumGray)
+                        Text("${weeklyCaloriesBurned.toInt()} kcal", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00E676))
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Card 3: Nutrition & Hydration Averages
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = CardGray),
+            border = BorderStroke(1.dp, BorderGray)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Diet & Nutrition (Daily Averages)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF9800))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text("Calories Intake", fontSize = 11.sp, color = MediumGray)
+                        Text("${avgCalories.toInt()} kcal", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00E676))
+                        Text("Target: ${goal.calories.toInt()}", fontSize = 10.sp, color = MediumGray)
+                    }
+                    Column {
+                        Text("Avg Protein", fontSize = 11.sp, color = MediumGray)
+                        Text("${avgProtein.toInt()}g", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF9800))
+                        Text("Target: ${goal.protein.toInt()}g", fontSize = 10.sp, color = MediumGray)
+                    }
+                    Column {
+                        Text("Goal Compliance", fontSize = 11.sp, color = MediumGray)
+                        Text("$compliancePct%", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = White)
+                        Text("Logged: ${logsByDate.size} days", fontSize = 10.sp, color = MediumGray)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = BorderGray)
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Average Hydration", fontSize = 11.sp, color = MediumGray)
+                        Text(String.format(Locale.US, "%.1f Liters", avgWaterL), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2196F3))
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Avg Carbs", fontSize = 10.sp, color = MediumGray)
+                            Text("${avgCarbs.toInt()}g", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2196F3))
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Avg Fat", fontSize = 10.sp, color = MediumGray)
+                            Text("${avgFat.toInt()}g", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE91E63))
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Insights & Recommendations
+        Text("Weekly Fitness Insights", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = White)
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = CardGray),
+            border = BorderStroke(1.dp, BorderGray)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                val volumeVal = if (isImperial) com.example.fitnesstracker.util.UnitConverter.kgToLbs(weeklyVolume) else weeklyVolume
+                val volUnit = if (isImperial) "lbs" else "kg"
+                
+                val gymInsight = if (weeklySessionCount > 0) {
+                    "Strength: Logged $weeklySessionCount sessions with a total volume of ${volumeVal.toInt()} $volUnit. Keep up the progressive overload!"
+                } else {
+                    "Strength: No gym sessions logged this week. Try scheduling at least 2 strength workouts to maintain muscle mass."
+                }
+                Text("• $gymInsight", fontSize = 13.sp, color = LightGray)
+
+                val distVal = if (isImperial) weeklyDistanceKm * 0.621371 else weeklyDistanceKm
+                val distUnit = if (isImperial) "mi" else "km"
+                
+                val cardioInsight = if (weeklyWorkoutsCount > 0) {
+                    "Cardio: Completed $weeklyWorkoutsCount tracked activities covering ${"%.1f".format(distVal)} $distUnit and burning ${weeklyCaloriesBurned.toInt()} kcal. Excellent energy expenditure!"
+                } else {
+                    "Cardio: No outdoor cardio tracked. Try walking or running to improve your cardiovascular fitness."
+                }
+                Text("• $cardioInsight", fontSize = 13.sp, color = LightGray)
+
+                val nutritionInsight = if (logsByDate.isNotEmpty()) {
+                    val proteinConsistencyText = if (avgProtein >= goal.protein - 10.0) {
+                        "met protein targets consistently"
+                    } else {
+                        "need to increase your protein intake (avg ${avgProtein.toInt()}g vs goal ${goal.protein.toInt()}g)"
+                    }
+                    "Nutrition: Logged diet for ${logsByDate.size} days. Average daily intake is ${avgCalories.toInt()} kcal. You $proteinConsistencyText to match your ${profile.fitnessGoal} goal."
+                } else {
+                    "Nutrition: No meals logged in the database. Log what you eat on the Nutrition tab to get custom target analysis!"
+                }
+                Text("• $nutritionInsight", fontSize = 13.sp, color = LightGray)
+            }
+        }
+    }
 }
 

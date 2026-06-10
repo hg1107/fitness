@@ -5,6 +5,7 @@ import com.example.fitnesstracker.data.SessionWithSets
 import com.example.fitnesstracker.data.WorkoutDao
 import com.example.fitnesstracker.data.WorkoutSession
 import com.example.fitnesstracker.data.WorkoutSet
+import com.example.fitnesstracker.data.UserProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -110,6 +111,38 @@ class WorkoutViewModelTest {
         val weeklySets = viewModel.weeklySetCount.first()
         assertEquals(2, weeklySets)
     }
+
+    @Test
+    fun testDeleteSessionDeletesPlannedExercise() = runTest {
+        // Given a planned exercise for Wednesday (day 3)
+        viewModel.selectDay(3)
+        viewModel.addPlannedExercise("Squats", "Legs")
+        
+        // Confirm it is added
+        val plannedBefore = viewModel.plannedExercises.first()
+        assertEquals(1, plannedBefore.size)
+        assertEquals("Squats", plannedBefore[0].exerciseName)
+        
+        // Log a session for Wednesday (2026-06-10 is Wednesday)
+        val calendar = java.util.Calendar.getInstance()
+        calendar.set(2026, java.util.Calendar.JUNE, 10, 10, 0)
+        val wednesdayTimestamp = calendar.timeInMillis
+        
+        val session = WorkoutSession(
+            id = 1,
+            exerciseName = "Squats",
+            timestamp = wednesdayTimestamp,
+            notes = ""
+        )
+        val sessionWithSets = SessionWithSets(session, emptyList())
+        
+        // When we delete this session
+        viewModel.deleteSession(sessionWithSets)
+        
+        // Then the planned exercise should also be deleted
+        val plannedAfter = viewModel.plannedExercises.first()
+        assertEquals(0, plannedAfter.size)
+    }
 }
 
 class FakeWorkoutDao : WorkoutDao {
@@ -128,6 +161,10 @@ class FakeWorkoutDao : WorkoutDao {
 
     override suspend fun deletePlannedExercise(plannedExercise: PlannedExercise) {
         plannedExercises.removeIf { it.id == plannedExercise.id }
+    }
+
+    override suspend fun deletePlannedExerciseByNameAndDay(name: String, day: Int) {
+        plannedExercises.removeIf { it.exerciseName == name && it.dayOfWeek == day }
     }
 
     override suspend fun insertWorkoutSession(session: WorkoutSession): Long {
@@ -156,5 +193,48 @@ class FakeWorkoutDao : WorkoutDao {
 
     override suspend fun getLastSessionWithSetsForExercise(exerciseName: String): SessionWithSets? {
         return sessions.lastOrNull { it.session.exerciseName == exerciseName }
+    }
+
+    override fun getAllSessionsForExercise(exerciseName: String): Flow<List<SessionWithSets>> = flow {
+        emit(sessions.filter { it.session.exerciseName == exerciseName }.reversed())
+    }
+
+    override suspend fun getMaxWeightForExercise(exerciseName: String): Double? {
+        return sessions.filter { it.session.exerciseName == exerciseName }
+            .flatMap { it.sets }
+            .maxOfOrNull { it.weight }
+    }
+
+    override suspend fun deleteWorkoutSession(session: WorkoutSession) {
+        sessions.removeIf { it.session.id == session.id }
+    }
+
+    override fun getSessionCountSince(since: Long): Flow<Int> = flow {
+        emit(sessions.count { it.session.timestamp >= since })
+    }
+
+    override fun getAllUniqueExerciseNames(): Flow<List<String>> = flow {
+        val names = (plannedExercises.map { it.exerciseName } + sessions.map { it.session.exerciseName }).distinct().sorted()
+        emit(names)
+    }
+
+    override fun getAllPlannedExercises(): Flow<List<PlannedExercise>> = flow {
+        emit(plannedExercises)
+    }
+
+    override suspend fun getUserProfileSync(): UserProfile? {
+        return UserProfile(
+            id = "default_user",
+            name = "John Doe",
+            age = 25,
+            gender = "Male",
+            weightKg = 70.0,
+            heightCm = 175.0,
+            fitnessGoal = "Lean Bulk",
+            activityLevel = "Moderately Active",
+            preferredUnits = "Metric",
+            dietaryPreference = "Non-Vegetarian",
+            foodAllergies = "None"
+        )
     }
 }

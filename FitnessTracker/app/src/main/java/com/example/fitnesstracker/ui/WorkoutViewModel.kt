@@ -408,8 +408,24 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
         activeDays
     }
 
+    private fun getDayOfWeekFromTimestamp(timestamp: Long): Int {
+        val calendar = Calendar.getInstance()
+        calendar.timeInMillis = timestamp
+        return when (calendar.get(Calendar.DAY_OF_WEEK)) {
+            Calendar.MONDAY -> 1
+            Calendar.TUESDAY -> 2
+            Calendar.WEDNESDAY -> 3
+            Calendar.THURSDAY -> 4
+            Calendar.FRIDAY -> 5
+            Calendar.SATURDAY -> 6
+            Calendar.SUNDAY -> 7
+            else -> 1
+        }
+    }
+
     fun deleteSession(session: SessionWithSets) {
         viewModelScope.launch {
+            workoutDao.deletePlannedExercisesByName(session.session.exerciseName)
             workoutDao.deleteWorkoutSession(session.session)
         }
     }
