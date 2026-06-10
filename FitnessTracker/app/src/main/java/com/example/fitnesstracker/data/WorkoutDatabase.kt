@@ -16,7 +16,8 @@ data class PlannedExercise(
 data class WorkoutSession(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val exerciseName: String,
-    val timestamp: Long
+    val timestamp: Long,
+    val notes: String = ""
 )
 
 @Entity(
@@ -81,11 +82,15 @@ interface WorkoutDao {
     @Transaction
     @Query("SELECT * FROM workout_sessions WHERE exerciseName = :exerciseName ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLastSessionWithSetsForExercise(exerciseName: String): SessionWithSets?
+
+    @Transaction
+    @Query("SELECT * FROM workout_sessions WHERE exerciseName = :exerciseName ORDER BY timestamp DESC")
+    fun getAllSessionsForExercise(exerciseName: String): Flow<List<SessionWithSets>>
 }
 
 @Database(
     entities = [PlannedExercise::class, WorkoutSession::class, WorkoutSet::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class WorkoutDatabase : RoomDatabase() {
@@ -102,7 +107,7 @@ abstract class WorkoutDatabase : RoomDatabase() {
                     WorkoutDatabase::class.java,
                     "workout_database"
                 )
-                .fallbackToDestructiveMigration()
+                .fallbackToDestructiveMigration(true)
                 .build()
                 INSTANCE = instance
                 instance

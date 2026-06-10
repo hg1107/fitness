@@ -1,7 +1,6 @@
 package com.example.fitnesstracker.ui
 
 import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -10,6 +9,9 @@ import com.example.fitnesstracker.data.SessionWithSets
 import com.example.fitnesstracker.data.WorkoutDao
 import com.example.fitnesstracker.data.WorkoutSession
 import com.example.fitnesstracker.data.WorkoutSet
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -21,9 +23,11 @@ enum class ChartMetric {
 data class SetInputState(
     val setIndex: Int,
     val weight: String = "",
-    val reps: String = ""
+    val reps: String = "",
+    val isPersonalBest: Boolean = false
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
 
     // --- Dashboard / Routine Manager ---
@@ -72,16 +76,41 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
     private val _chartMetric = MutableStateFlow(ChartMetric.WEIGHT)
     val chartMetric: StateFlow<ChartMetric> = _chartMetric.asStateFlow()
 
+    private val _sessionNotes = MutableStateFlow("")
+    val sessionNotes: StateFlow<String> = _sessionNotes.asStateFlow()
+
+    // Tracks total volume in current session for live display
+    private val _currentVolume = MutableStateFlow(0.0)
+    val currentVolume: StateFlow<Double> = _currentVolume.asStateFlow()
+
+    private fun recalculateVolume() {
+        _currentVolume.value = currentSets.sumOf {
+            (it.weight.toDoubleOrNull() ?: 0.0) * (it.reps.toIntOrNull() ?: 0)
+        }
+    }
+
+    // Personal best tracking: max single-set weight for the exercise ever
+    private val _personalBestWeight = MutableStateFlow(0.0)
+    val personalBestWeight: StateFlow<Double> = _personalBestWeight.asStateFlow()
+
     fun setChartMetric(metric: ChartMetric) {
         _chartMetric.value = metric
     }
 
+    fun updateSessionNotes(notes: String) {
+        _sessionNotes.value = notes
+    }
+
     fun startLogging(exerciseName: String) {
         _loggingExerciseName.value = exerciseName
+        _sessionNotes.value = ""
         currentSets.clear()
         viewModelScope.launch {
             val lastSession = workoutDao.getLastSessionWithSetsForExercise(exerciseName)
             _previousSession.value = lastSession
+
+            // Compute personal best from last session
+            _personalBestWeight.value = lastSession?.sets?.maxOfOrNull { it.weight } ?: 0.0
 
             // Pre-populate with standard sets if lastSession exists, else start with 1 empty set
             if (lastSession != null && lastSession.sets.isNotEmpty()) {
@@ -102,13 +131,20 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
 
     fun updateSetWeight(index: Int, weight: String) {
         if (index in currentSets.indices) {
-            currentSets[index] = currentSets[index].copy(weight = weight)
+            val prevBest = _personalBestWeight.value
+            val newWeight = weight.toDoubleOrNull() ?: 0.0
+            currentSets[index] = currentSets[index].copy(
+                weight = weight,
+                isPersonalBest = prevBest > 0 && newWeight > prevBest
+            )
+            recalculateVolume()
         }
     }
 
     fun updateSetReps(index: Int, reps: String) {
         if (index in currentSets.indices) {
             currentSets[index] = currentSets[index].copy(reps = reps)
+            recalculateVolume()
         }
     }
 
@@ -123,6 +159,7 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
                 reps = templateSet?.reps ?: ""
             )
         )
+        recalculateVolume()
     }
 
     fun deleteSet(index: Int) {
@@ -134,6 +171,7 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
             }
             currentSets.clear()
             currentSets.addAll(updated)
+            recalculateVolume()
         }
     }
 
@@ -150,6 +188,7 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
                     )
                 )
             }
+            recalculateVolume()
         }
     }
 
@@ -160,7 +199,8 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
         viewModelScope.launch {
             val session = WorkoutSession(
                 exerciseName = exerciseName,
-                timestamp = System.currentTimeMillis()
+                timestamp = System.currentTimeMillis(),
+                notes = _sessionNotes.value.trim()
             )
 
             // Convert string inputs to numeric data types (fail-safe defaults)
@@ -176,6 +216,42 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
             workoutDao.saveWorkoutSession(session, sets)
             onSuccess()
         }
+    }
+
+    // --- Rest Timer ---
+    private val _restTimerSeconds = MutableStateFlow(0)
+    val restTimerSeconds: StateFlow<Int> = _restTimerSeconds.asStateFlow()
+
+    private val _restTimerRunning = MutableStateFlow(false)
+    val restTimerRunning: StateFlow<Boolean> = _restTimerRunning.asStateFlow()
+
+    private val _restTimerDuration = MutableStateFlow(90) // default 90s
+    val restTimerDuration: StateFlow<Int> = _restTimerDuration.asStateFlow()
+
+    private var timerJob: Job? = null
+
+    fun startRestTimer(seconds: Int = _restTimerDuration.value) {
+        timerJob?.cancel()
+        _restTimerDuration.value = seconds
+        _restTimerSeconds.value = seconds
+        _restTimerRunning.value = true
+        timerJob = viewModelScope.launch {
+            while (_restTimerSeconds.value > 0) {
+                delay(1000)
+                _restTimerSeconds.value -= 1
+            }
+            _restTimerRunning.value = false
+        }
+    }
+
+    fun stopRestTimer() {
+        timerJob?.cancel()
+        _restTimerRunning.value = false
+        _restTimerSeconds.value = 0
+    }
+
+    fun setRestTimerDuration(seconds: Int) {
+        _restTimerDuration.value = seconds
     }
 
     // --- History & Stats ---
@@ -225,6 +301,10 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
             }
         }
         activeDays
+    }
+
+    fun getSessionsForExercise(exerciseName: String): Flow<List<SessionWithSets>> {
+        return workoutDao.getAllSessionsForExercise(exerciseName)
     }
 
     companion object {

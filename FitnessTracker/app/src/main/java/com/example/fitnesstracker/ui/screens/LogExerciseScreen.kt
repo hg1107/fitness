@@ -1,7 +1,12 @@
 package com.example.fitnesstracker.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -9,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -54,6 +60,14 @@ fun LogExerciseScreen(
     val previousSession by viewModel.previousSession.collectAsState()
     val chartMetric by viewModel.chartMetric.collectAsState()
     val currentSets = viewModel.currentSets
+    val sessionNotes by viewModel.sessionNotes.collectAsState()
+    val currentVolume by viewModel.currentVolume.collectAsState(initial = 0.0)
+    val restTimerSeconds by viewModel.restTimerSeconds.collectAsState()
+    val restTimerRunning by viewModel.restTimerRunning.collectAsState()
+    val restTimerDuration by viewModel.restTimerDuration.collectAsState()
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    var showTimerConfig by remember { mutableStateOf(false) }
 
     // Initialize state when screen loads
     LaunchedEffect(exerciseName) {
@@ -64,12 +78,21 @@ fun LogExerciseScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = exerciseName,
-                        fontWeight = FontWeight.Bold,
-                        color = White,
-                        fontSize = 20.sp
-                    )
+                    Column {
+                        Text(
+                            text = exerciseName,
+                            fontWeight = FontWeight.Bold,
+                            color = White,
+                            fontSize = 18.sp
+                        )
+                        if (previousSession != null) {
+                            Text(
+                                text = "Last session available",
+                                fontSize = 11.sp,
+                                color = MediumGray
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
@@ -86,6 +109,7 @@ fun LogExerciseScreen(
                 )
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = Black,
         modifier = modifier.fillMaxSize()
     ) { padding ->
@@ -95,14 +119,46 @@ fun LogExerciseScreen(
                 .padding(padding)
                 .padding(horizontal = 16.dp)
         ) {
+            // Rest Timer Banner
+            AnimatedVisibility(
+                visible = restTimerRunning,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                RestTimerBanner(
+                    secondsLeft = restTimerSeconds,
+                    totalSeconds = restTimerDuration,
+                    onStop = { viewModel.stopRestTimer() }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // Chart Section
-            Text(
-                text = "Performance Comparison",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = LightGray
-            )
-            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Performance Comparison",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = LightGray
+                )
+                // Current session volume
+                val formattedVol = currentVolume.let {
+                    if (it % 1.0 == 0.0) "${it.toInt()} kg" else "${it} kg"
+                }
+                if (currentVolume > 0) {
+                    Text(
+                        text = "Vol: $formattedVol",
+                        fontSize = 13.sp,
+                        color = White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(8.dp))
 
             // Metric Toggle (Weight vs Reps)
@@ -111,35 +167,38 @@ fun LogExerciseScreen(
                 onMetricSelected = { viewModel.setChartMetric(it) }
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Dynamic Chart view
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(CardGray)
-                    .border(1.dp, BorderGray, RoundedCornerShape(12.dp))
-                    .padding(16.dp)
-            ) {
-                val previousValues = previousSession?.sets?.map {
-                    if (chartMetric == ChartMetric.WEIGHT) it.weight else it.reps.toDouble()
-                } ?: emptyList()
+            // Dynamic Chart view - use a key to trigger recompose on set changes
+            val chartKey = currentSets.map { "${it.weight}-${it.reps}" }.joinToString()
+            key(chartKey) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(CardGray)
+                        .border(1.dp, BorderGray, RoundedCornerShape(12.dp))
+                        .padding(12.dp)
+                ) {
+                    val previousValues = previousSession?.sets?.map {
+                        if (chartMetric == ChartMetric.WEIGHT) it.weight else it.reps.toDouble()
+                    } ?: emptyList()
 
-                val currentValues = currentSets.map {
-                    val valueStr = if (chartMetric == ChartMetric.WEIGHT) it.weight else it.reps
-                    valueStr.toDoubleOrNull() ?: 0.0
+                    val currentValues = currentSets.map {
+                        val valueStr = if (chartMetric == ChartMetric.WEIGHT) it.weight else it.reps
+                        valueStr.toDoubleOrNull() ?: 0.0
+                    }
+
+                    ComparisonChart(
+                        previousValues = previousValues,
+                        currentValues = currentValues,
+                        metric = chartMetric
+                    )
                 }
-
-                ComparisonChart(
-                    previousValues = previousValues,
-                    currentValues = currentValues,
-                    metric = chartMetric
-                )
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Controls & Log Table Header
             Row(
@@ -148,26 +207,57 @@ fun LogExerciseScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Sets",
-                    fontSize = 18.sp,
+                    text = "Sets  (${currentSets.size})",
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = White
                 )
-                
-                if (previousSession != null) {
-                    Text(
-                        text = "Copy Last Session",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LightGray,
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Rest Timer button
+                    val timerLabel = if (restTimerRunning) {
+                        formatTime(restTimerSeconds)
+                    } else {
+                        "Rest ${formatTime(restTimerDuration)}"
+                    }
+
+                    Box(
                         modifier = Modifier
-                            .clickable { viewModel.copyPreviousSessionSets() }
-                            .padding(vertical = 4.dp, horizontal = 8.dp)
-                    )
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (restTimerRunning) White else CardGray)
+                            .border(1.dp, BorderGray, RoundedCornerShape(6.dp))
+                            .clickable {
+                                if (restTimerRunning) viewModel.stopRestTimer()
+                                else viewModel.startRestTimer()
+                            }
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = timerLabel,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (restTimerRunning) Black else LightGray
+                        )
+                    }
+
+                    if (previousSession != null) {
+                        Text(
+                            text = "Copy Last",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = LightGray,
+                            modifier = Modifier
+                                .clickable { viewModel.copyPreviousSessionSets() }
+                                .padding(vertical = 4.dp, horizontal = 4.dp)
+                        )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Table Headers
             Row(
@@ -176,25 +266,25 @@ fun LogExerciseScreen(
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Set", modifier = Modifier.width(40.dp), color = MediumGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Text("Last", modifier = Modifier.width(90.dp), color = MediumGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Text("Weight", modifier = Modifier.weight(1f), color = MediumGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.width(12.dp))
-                Text("Reps", modifier = Modifier.weight(1f), color = MediumGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.width(48.dp)) // space for delete icon
+                Text("#", modifier = Modifier.width(32.dp), color = MediumGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("Last", modifier = Modifier.width(80.dp), color = MediumGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("kg", modifier = Modifier.weight(1f), color = MediumGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Reps", modifier = Modifier.weight(1f), color = MediumGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.width(40.dp))
             }
 
             // Sets List
             LazyColumn(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 16.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(bottom = 12.dp)
             ) {
                 itemsIndexed(currentSets) { index, set ->
                     val lastSessionSet = previousSession?.sets?.getOrNull(index)
                     val lastSessionText = if (lastSessionSet != null) {
                         val w = lastSessionSet.weight.let { if (it % 1.0 == 0.0) it.toInt().toString() else it.toString() }
-                        "${w}kg x ${lastSessionSet.reps}"
+                        "${w}×${lastSessionSet.reps}"
                     } else {
                         "—"
                     }
@@ -204,6 +294,7 @@ fun LogExerciseScreen(
                         lastSessionText = lastSessionText,
                         weightValue = set.weight,
                         repsValue = set.reps,
+                        isPersonalBest = set.isPersonalBest,
                         onWeightChange = { viewModel.updateSetWeight(index, it) },
                         onRepsChange = { viewModel.updateSetReps(index, it) },
                         onDelete = { viewModel.deleteSet(index) }
@@ -211,7 +302,7 @@ fun LogExerciseScreen(
                 }
 
                 item {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Button(
                         onClick = { viewModel.addSet() },
                         colors = ButtonDefaults.buttonColors(
@@ -226,9 +317,32 @@ fun LogExerciseScreen(
                         Text("+ Add Set", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                     }
                 }
+
+                // Notes field
+                item {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = sessionNotes,
+                        onValueChange = { viewModel.updateSessionNotes(it) },
+                        label = { Text("Session notes (optional)", color = MediumGray, fontSize = 13.sp) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = White,
+                            unfocusedTextColor = White,
+                            focusedBorderColor = BorderGray,
+                            unfocusedBorderColor = BorderGray,
+                            focusedContainerColor = CardGray,
+                            unfocusedContainerColor = CardGray
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        minLines = 2,
+                        maxLines = 3
+                    )
+                }
             }
 
             // Save Button
+            Spacer(modifier = Modifier.height(8.dp))
             Button(
                 onClick = {
                     viewModel.saveSession(onSuccess = onNavigateBack)
@@ -240,14 +354,81 @@ fun LogExerciseScreen(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(50.dp)
-                    .padding(bottom = 8.dp)
+                    .height(52.dp)
             ) {
                 Text("Save Session", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
         }
     }
+}
+
+@Composable
+fun RestTimerBanner(
+    secondsLeft: Int,
+    totalSeconds: Int,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val progress = if (totalSeconds > 0) secondsLeft.toFloat() / totalSeconds else 0f
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(CardGray)
+            .border(1.dp, BorderGray, RoundedCornerShape(10.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Rest Timer",
+                color = MediumGray,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = formatTime(secondsLeft),
+                    color = White,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(BorderGray)
+                        .clickable { onStop() }
+                        .padding(6.dp)
+                ) {
+                    Text("✕", color = LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(3.dp)
+                .clip(RoundedCornerShape(2.dp)),
+            color = White,
+            trackColor = BorderGray
+        )
+    }
+}
+
+private fun formatTime(seconds: Int): String {
+    val m = seconds / 60
+    val s = seconds % 60
+    return if (m > 0) "${m}m ${s.toString().padStart(2, '0')}s" else "${s}s"
 }
 
 @Composable
@@ -304,10 +485,14 @@ fun ComparisonChart(
     val numSets = max(1, max(previousValues.size, currentValues.size))
     val maxVal = max(10.0, max(previousValues.maxOrNull() ?: 0.0, currentValues.maxOrNull() ?: 0.0))
 
-    // Animate drawing progress
+    // Animate drawing progress — keyed on the data changing
+    var animationTrigger by remember { mutableStateOf(0) }
+    LaunchedEffect(previousValues, currentValues) {
+        animationTrigger++
+    }
     val animationProgress by animateFloatAsState(
-        targetValue = 1f,
-        animationSpec = tween(durationMillis = 500),
+        targetValue = if (animationTrigger > 0) 1f else 0f,
+        animationSpec = tween(durationMillis = 400),
         label = "chartAnimation"
     )
 
@@ -317,17 +502,45 @@ fun ComparisonChart(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "Enter sets below to see progress chart",
+                text = "Enter sets below to see your progress",
                 color = MediumGray,
-                fontSize = 13.sp
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center
             )
         }
     } else {
+        // Legend
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (previousValues.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(MutedDarkGray)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Last", color = MediumGray, fontSize = 10.sp)
+                Spacer(modifier = Modifier.width(10.dp))
+            }
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(White)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Now", color = LightGray, fontSize = 10.sp)
+        }
+
         Canvas(modifier = modifier.fillMaxSize()) {
             val width = size.width
             val height = size.height
-            val paddingBottom = 24.dp.toPx()
-            val paddingTop = 20.dp.toPx()
+            val paddingBottom = 22.dp.toPx()
+            val paddingTop = 16.dp.toPx()
             val usableHeight = height - paddingBottom - paddingTop
             val colWidth = width / numSets
 
@@ -358,7 +571,7 @@ fun ComparisonChart(
                         color = MutedDarkGray,
                         topLeft = Offset(colCenterX - barWidth - spacing, prevY),
                         size = Size(barWidth, prevBarHeight),
-                        cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                        cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
                     )
 
                     // Draw previous value text directly above the bar
@@ -390,7 +603,7 @@ fun ComparisonChart(
                         color = White,
                         topLeft = Offset(colCenterX + spacing, currY),
                         size = Size(barWidth, currBarHeight),
-                        cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                        cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
                     )
 
                     // Draw current value text directly above the bar
@@ -436,6 +649,7 @@ fun SetRow(
     lastSessionText: String,
     weightValue: String,
     repsValue: String,
+    isPersonalBest: Boolean,
     onWeightChange: (String) -> Unit,
     onRepsChange: (String) -> Unit,
     onDelete: () -> Unit,
@@ -444,24 +658,43 @@ fun SetRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (isPersonalBest) CardGray else Color.Transparent)
+            .border(
+                width = if (isPersonalBest) 1.dp else 0.dp,
+                color = if (isPersonalBest) LightGray else Color.Transparent,
+                shape = RoundedCornerShape(8.dp)
+            )
+            .padding(horizontal = if (isPersonalBest) 8.dp else 0.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Set number
-        Text(
-            text = setIndex.toString(),
-            modifier = Modifier.width(40.dp),
-            color = White,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold
-        )
+        // Set number + PR badge
+        Column(
+            modifier = Modifier.width(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = setIndex.toString(),
+                color = White,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+            if (isPersonalBest) {
+                Text(
+                    text = "PR",
+                    color = White,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+        }
 
         // Previous performance
         Text(
             text = lastSessionText,
-            modifier = Modifier.width(90.dp),
+            modifier = Modifier.width(80.dp),
             color = MediumGray,
-            fontSize = 14.sp
+            fontSize = 13.sp
         )
 
         // Weight textfield
@@ -470,7 +703,7 @@ fun SetRow(
             onValueChange = onWeightChange,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             singleLine = true,
-            placeholder = { Text("0", color = MediumGray) },
+            placeholder = { Text("0", color = MediumGray, fontSize = 14.sp) },
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = White,
                 unfocusedTextColor = White,
@@ -479,11 +712,14 @@ fun SetRow(
                 focusedContainerColor = CardGray,
                 unfocusedContainerColor = CardGray
             ),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .height(52.dp),
+            textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
             shape = RoundedCornerShape(8.dp)
         )
 
-        Spacer(modifier = Modifier.width(12.dp))
+        Spacer(modifier = Modifier.width(8.dp))
 
         // Reps textfield
         OutlinedTextField(
@@ -491,7 +727,7 @@ fun SetRow(
             onValueChange = onRepsChange,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             singleLine = true,
-            placeholder = { Text("0", color = MediumGray) },
+            placeholder = { Text("0", color = MediumGray, fontSize = 14.sp) },
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = White,
                 unfocusedTextColor = White,
@@ -500,19 +736,23 @@ fun SetRow(
                 focusedContainerColor = CardGray,
                 unfocusedContainerColor = CardGray
             ),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .height(52.dp),
+            textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
             shape = RoundedCornerShape(8.dp)
         )
 
         // Delete button
         IconButton(
             onClick = onDelete,
+            modifier = Modifier.size(40.dp),
             colors = IconButtonDefaults.iconButtonColors(contentColor = MediumGray)
         ) {
             Icon(
                 imageVector = Icons.Default.Delete,
                 contentDescription = "Delete Set",
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(18.dp)
             )
         }
     }

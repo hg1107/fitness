@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -39,6 +40,7 @@ fun DashboardScreen(
     val selectedDay by viewModel.selectedDay.collectAsState(initial = 1)
     val exercises by viewModel.plannedExercises.collectAsState(initial = emptyList())
     var showAddDialog by remember { mutableStateOf(false) }
+    val today = WorkoutViewModel.getCurrentDayOfWeek()
 
     Column(
         modifier = modifier
@@ -49,28 +51,56 @@ fun DashboardScreen(
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(
-            text = "Routine Plan",
+            text = "Workout Plan",
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold,
             color = White
         )
         
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = "Select a day and log your sets",
+            fontSize = 14.sp,
+            color = MediumGray
+        )
+
         Spacer(modifier = Modifier.height(20.dp))
 
         // Weekday selector: Mon (1) to Sun (7)
         DayOfWeekSelector(
             selectedDay = selectedDay,
+            todayDay = today,
             onDaySelected = { viewModel.selectDay(it) }
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        Text(
-            text = getDayName(selectedDay),
-            fontSize = 18.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = LightGray
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = getDayName(selectedDay),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = LightGray
+            )
+            if (selectedDay == today) {
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = White
+                ) {
+                    Text(
+                        text = "TODAY",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Black,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(12.dp))
 
@@ -80,13 +110,21 @@ fun DashboardScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "No exercises planned for today.\nTap '+' to add one.",
-                        fontSize = 15.sp,
-                        color = MediumGray,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        lineHeight = 22.sp
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Rest day",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = LightGray
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Tap '+' to add exercises for ${getDayShort(selectedDay)}",
+                            fontSize = 14.sp,
+                            color = MediumGray,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             } else {
                 LazyColumn(
@@ -136,10 +174,12 @@ fun DashboardScreen(
 @Composable
 fun DayOfWeekSelector(
     selectedDay: Int,
+    todayDay: Int,
     onDaySelected: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val dayLabels = listOf("M", "T", "W", "T", "F", "S", "S")
+    // Unique 2-letter abbreviations for each day
+    val dayLabels = listOf("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su")
     
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -148,21 +188,38 @@ fun DayOfWeekSelector(
         dayLabels.forEachIndexed { index, label ->
             val dayNum = index + 1
             val isSelected = selectedDay == dayNum
+            val isToday = todayDay == dayNum
             
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(CircleShape)
-                    .background(if (isSelected) White else CardGray)
-                    .border(1.dp, if (isSelected) White else BorderGray, CircleShape)
-                    .clickable { onDaySelected(dayNum) },
-                contentAlignment = Alignment.Center
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text(
-                    text = label,
-                    color = if (isSelected) Black else LightGray,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(if (isSelected) White else CardGray)
+                        .border(
+                            width = if (isToday && !isSelected) 1.5.dp else 1.dp,
+                            color = if (isSelected) White else if (isToday) LightGray else BorderGray,
+                            shape = CircleShape
+                        )
+                        .clickable { onDaySelected(dayNum) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        color = if (isSelected) Black else LightGray,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                // Small dot under today's column
+                Box(
+                    modifier = Modifier
+                        .size(4.dp)
+                        .clip(CircleShape)
+                        .background(if (isToday) White else Black)
                 )
             }
         }
@@ -189,7 +246,7 @@ fun ExercisePlanCard(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = exercise.exerciseName,
-                fontSize = 18.sp,
+                fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
                 color = White
             )
@@ -326,13 +383,26 @@ fun AddExerciseDialog(
 
 private fun getDayName(day: Int): String {
     return when (day) {
-        1 -> "Monday Workout"
-        2 -> "Tuesday Workout"
-        3 -> "Wednesday Workout"
-        4 -> "Thursday Workout"
-        5 -> "Friday Workout"
-        6 -> "Saturday Workout"
-        7 -> "Sunday Workout"
+        1 -> "Monday"
+        2 -> "Tuesday"
+        3 -> "Wednesday"
+        4 -> "Thursday"
+        5 -> "Friday"
+        6 -> "Saturday"
+        7 -> "Sunday"
+        else -> ""
+    }
+}
+
+private fun getDayShort(day: Int): String {
+    return when (day) {
+        1 -> "Mon"
+        2 -> "Tue"
+        3 -> "Wed"
+        4 -> "Thu"
+        5 -> "Fri"
+        6 -> "Sat"
+        7 -> "Sun"
         else -> ""
     }
 }

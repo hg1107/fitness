@@ -3,7 +3,7 @@ package com.example.fitnesstracker
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -63,13 +63,15 @@ fun MainNavigation() {
                       )
                   )
                   NavigationBarItem(
-                      selected = currentKey == History,
-                      onClick = {
-                          if (currentKey != History) {
-                              backStack.add(History)
-                          }
-                      },
-                      icon = { Icon(Icons.Default.List, contentDescription = "History") },
+                       selected = currentKey == History,
+                       onClick = {
+                           if (currentKey != History) {
+                               // Remove existing History from stack to prevent duplicates
+                               backStack.removeAll { it == History }
+                               backStack.add(History)
+                           }
+                       },
+                      icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "History") },
                       label = { Text("History") },
                       colors = NavigationBarItemDefaults.colors(
                           selectedIconColor = Black,
