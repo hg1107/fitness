@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -41,6 +42,7 @@ import com.example.fitnesstracker.ui.screens.OnboardingScreen
 import com.example.fitnesstracker.ui.screens.NutritionScreen
 import com.example.fitnesstracker.ui.screens.FoodSearchScreen
 import com.example.fitnesstracker.ui.screens.AICoachScreen
+import com.example.fitnesstracker.ui.screens.ProfileScreen
 
 
 @Composable
@@ -88,9 +90,11 @@ fun MainNavigation() {
   val backStack = rememberNavBackStack(Dashboard)
   val currentKey = backStack.lastOrNull()
 
+  val bottomNavKeys = listOf(Dashboard, Track, Nutrition, History, Profile)
+
   Scaffold(
       bottomBar = {
-          if (currentKey == Dashboard || currentKey == Track || currentKey == History || currentKey == Nutrition) {
+          if (currentKey in bottomNavKeys) {
               NavigationBar(
                   containerColor = CardGray,
                   tonalElevation = NavigationBarDefaults.Elevation
@@ -167,6 +171,24 @@ fun MainNavigation() {
                           unselectedTextColor = MediumGray
                       )
                   )
+                  NavigationBarItem(
+                      selected = currentKey == Profile,
+                      onClick = {
+                          if (currentKey != Profile) {
+                              backStack.removeAll { it == Profile }
+                              backStack.add(Profile)
+                          }
+                      },
+                      icon = { Icon(Icons.Default.Person, contentDescription = "Profile") },
+                      label = { Text("Profile") },
+                      colors = NavigationBarItemDefaults.colors(
+                          selectedIconColor = Black,
+                          selectedTextColor = White,
+                          indicatorColor = White,
+                          unselectedIconColor = MediumGray,
+                          unselectedTextColor = MediumGray
+                      )
+                  )
               }
           }
       },
@@ -233,6 +255,7 @@ fun MainNavigation() {
               entry<Nutrition> {
                   NutritionScreen(
                       viewModel = nutritionViewModel,
+                      activityViewModel = activityViewModel,
                       onNavigateToSearch = { mealType ->
                           backStack.add(FoodSearch(mealType))
                       },
@@ -255,8 +278,13 @@ fun MainNavigation() {
                       onNavigateBack = { backStack.removeLastOrNull() }
                   )
               }
+              entry<Profile> {
+                  ProfileScreen(
+                      viewModel = nutritionViewModel,
+                      onNavigateBack = { backStack.removeLastOrNull() }
+                  )
+              }
           }
       )
   }
 }
-

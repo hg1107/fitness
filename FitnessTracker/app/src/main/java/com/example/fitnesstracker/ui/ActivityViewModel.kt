@@ -296,6 +296,17 @@ class ActivityViewModel(
         val since = getStartOfMonth()
         list.filter { it.startTime >= since }.sumOf { it.calories }
     }
+
+    // Today's calories burned (for net calorie integration on Nutrition screen)
+    val todayCaloriesBurned: Flow<Double> = allActivities.map { list ->
+        val cal = java.util.Calendar.getInstance()
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        val startOfDay = cal.timeInMillis
+        list.filter { it.startTime >= startOfDay }.sumOf { it.calories }
+    }
 }
 
 class ActivityViewModelFactory(

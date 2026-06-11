@@ -315,6 +315,9 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
                     items(filteredSessions, key = { it.session.id }) { sessionWithSets ->
                         ExpandableHistoryRow(
                             sessionWithSets = sessionWithSets,
+                            allSessionsForExercise = filteredSessions.filter {
+                                it.session.exerciseName == sessionWithSets.session.exerciseName
+                            },
                             isImperial = isImperial,
                             onDelete = { sessionToDelete = sessionWithSets }
                         )
@@ -675,6 +678,7 @@ fun ActivityRowItem(
 @Composable
 fun ExpandableHistoryRow(
     sessionWithSets: SessionWithSets,
+    allSessionsForExercise: List<SessionWithSets>,
     isImperial: Boolean,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
@@ -693,6 +697,14 @@ fun ExpandableHistoryRow(
     val formattedVolume = displayVolume.let {
         if (it % 1.0 == 0.0) "${it.toInt()}$volumeUnit" else String.format(java.util.Locale.US, "%.1f%s", it, volumeUnit)
     }
+    // PR: this session holds the single highest-weight set ever done for this exercise
+    val thisSessionMaxWeight = sessionWithSets.sets.maxOfOrNull { it.weight } ?: 0.0
+    val hasPersonalBest = thisSessionMaxWeight > 0.0 && allSessionsForExercise
+        .filter { it.session.id != sessionWithSets.session.id }
+        .flatMap { it.sets }
+        .maxOfOrNull { it.weight }
+        ?.let { thisSessionMaxWeight > it } ?: true
+
 
     val chevronRotation by animateFloatAsState(
         targetValue = if (expanded) 90f else 0f,
@@ -715,12 +727,33 @@ fun ExpandableHistoryRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = sessionWithSets.session.exerciseName,
-                    color = White,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = sessionWithSets.session.exerciseName,
+                        color = White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (hasPersonalBest) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color(0xFFFFD700).copy(alpha = 0.15f),
+                            modifier = Modifier
+                                .border(1.dp, Color(0xFFFFD700).copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                        ) {
+                            Text(
+                                text = "🏆 PR",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFFFD700),
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(3.dp))
                 Text(
                     text = "$dateString  $timeString",

@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,6 +43,8 @@ fun DashboardScreen(
     val exercises by viewModel.plannedExercises.collectAsState(initial = emptyList())
     val daysWithPlannedExercises by viewModel.daysWithPlannedExercises.collectAsState(initial = emptySet())
     val exerciseSuggestions by viewModel.uniqueExerciseNames.collectAsState(initial = emptyList())
+    val workoutStreak by viewModel.workoutStreak.collectAsState(initial = 0)
+    val todayLoggedExerciseNames by viewModel.todayLoggedExerciseNames.collectAsState(initial = emptyList())
     var showAddDialog by remember { mutableStateOf(false) }
     var exerciseToDelete by remember { mutableStateOf<PlannedExercise?>(null) }
     val today = WorkoutViewModel.getCurrentDayOfWeek()
@@ -68,6 +71,36 @@ fun DashboardScreen(
             fontSize = 14.sp,
             color = MediumGray
         )
+
+        // Streak banner
+        if (workoutStreak > 0) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF1A1A1A))
+                    .border(1.dp, Color(0xFFFF9800).copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("🔥", fontSize = 18.sp)
+                Column {
+                    Text(
+                        text = "$workoutStreak-day streak!",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFF9800)
+                    )
+                    Text(
+                        text = "Keep it up — consistency is everything.",
+                        fontSize = 11.sp,
+                        color = MediumGray
+                    )
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(20.dp))
 
@@ -139,6 +172,9 @@ fun DashboardScreen(
                     items(exercises) { exercise ->
                         ExercisePlanCard(
                             exercise = exercise,
+                            isLoggedToday = todayLoggedExerciseNames.any {
+                                it.equals(exercise.exerciseName, ignoreCase = true)
+                            },
                             onLog = { onLogExercise(exercise.exerciseName) },
                             onDelete = { exerciseToDelete = exercise }
                         )
@@ -257,6 +293,7 @@ fun DayOfWeekSelector(
 @Composable
 fun ExercisePlanCard(
     exercise: PlannedExercise,
+    isLoggedToday: Boolean,
     onLog: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
@@ -265,24 +302,38 @@ fun ExercisePlanCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(CardGray)
-            .border(1.dp, BorderGray, RoundedCornerShape(12.dp))
+            .background(if (isLoggedToday) Color(0xFF0A2A1A) else CardGray)
+            .border(
+                1.dp,
+                if (isLoggedToday) Color(0xFF00E676).copy(alpha = 0.5f) else BorderGray,
+                RoundedCornerShape(12.dp)
+            )
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = exercise.exerciseName,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color = White
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = exercise.exerciseName,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = White
+                )
+                if (isLoggedToday) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "Logged today",
+                        tint = Color(0xFF00E676),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = exercise.targetMuscle,
+                text = if (isLoggedToday) "✓ Logged today  •  ${exercise.targetMuscle}" else exercise.targetMuscle,
                 fontSize = 13.sp,
-                color = MediumGray
+                color = if (isLoggedToday) Color(0xFF00E676).copy(alpha = 0.8f) else MediumGray
             )
         }
         

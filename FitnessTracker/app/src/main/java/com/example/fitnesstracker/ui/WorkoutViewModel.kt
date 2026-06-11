@@ -332,6 +332,39 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
     // --- History & Stats ---
     val allSessions: Flow<List<SessionWithSets>> = workoutDao.getAllSessionsWithSets()
 
+    // Names of exercises already logged today (for completion markers on Dashboard)
+    val todayLoggedExerciseNames: Flow<List<String>> = workoutDao.getLoggedExerciseNamesSince(
+        getStartOfDayTimestamp()
+    )
+
+    // Workout streak: number of consecutive calendar days (ending today) with at least 1 session
+    val workoutStreak: Flow<Int> = allSessions.map { sessions ->
+        if (sessions.isEmpty()) return@map 0
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+        val sessionDates = sessions.map { sdf.format(java.util.Date(it.session.timestamp)) }.toSet()
+        var streak = 0
+        val cal = Calendar.getInstance()
+        while (true) {
+            val dateStr = sdf.format(cal.time)
+            if (sessionDates.contains(dateStr)) {
+                streak++
+                cal.add(Calendar.DAY_OF_YEAR, -1)
+            } else {
+                break
+            }
+        }
+        streak
+    }
+
+    private fun getStartOfDayTimestamp(): Long {
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        return calendar.timeInMillis
+    }
+
     private fun getStartOfWeekTimestamp(): Long {
         val calendar = Calendar.getInstance()
         // Reset to start of day
@@ -425,7 +458,7 @@ class WorkoutViewModel(private val workoutDao: WorkoutDao) : ViewModel() {
 
     fun deleteSession(session: SessionWithSets) {
         viewModelScope.launch {
-            workoutDao.deletePlannedExercisesByName(session.session.exerciseName)
+            // BUGFIX: Only delete the logged session, NOT the planned exercise from the routine
             workoutDao.deleteWorkoutSession(session.session)
         }
     }

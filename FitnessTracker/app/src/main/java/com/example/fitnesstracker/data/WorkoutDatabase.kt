@@ -2,6 +2,8 @@ package com.example.fitnesstracker.data
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "planned_exercises")
@@ -113,6 +115,14 @@ interface WorkoutDao {
     // Get user profile to check unit settings (Metric vs Imperial)
     @Query("SELECT * FROM user_profile WHERE id = 'default_user'")
     suspend fun getUserProfileSync(): UserProfile?
+
+    // Get distinct exercise names logged since a given timestamp (for today's completion check)
+    @Query("SELECT DISTINCT exerciseName FROM workout_sessions WHERE timestamp >= :since")
+    fun getLoggedExerciseNamesSince(since: Long): Flow<List<String>>
+
+    // Get all sessions since a timestamp for streak calculation
+    @Query("SELECT * FROM workout_sessions WHERE timestamp >= :since ORDER BY timestamp DESC")
+    fun getAllSessionsSince(since: Long): Flow<List<WorkoutSession>>
 }
 
 @Entity(tableName = "activities")
@@ -174,7 +184,8 @@ data class UserProfile(
     val mealTimings: String = "Breakfast: 8 AM, Lunch: 1:30 PM, Dinner: 8:30 PM",
     val gymSchedule: String = "Mon, Wed, Fri",
     val availableFoodsAtHome: String = "eggs, milk, paneer, oats, banana, rice, roti",
-    val geminiApiKey: String = ""
+    val geminiApiKey: String = "",
+    val waterTargetMl: Int = 3000
 )
 
 @Entity(tableName = "food_items")
@@ -275,6 +286,10 @@ interface ActivityDao {
 
     @Query("SELECT * FROM user_profile WHERE id = 'default_user'")
     suspend fun getUserProfileSync(): UserProfile?
+
+    // Get total calories burned for a date range
+    @Query("SELECT SUM(calories) FROM activities WHERE startTime >= :since AND startTime < :until")
+    suspend fun getTotalCaloriesBurnedInRange(since: Long, until: Long): Double?
 }
 
 @Dao
@@ -330,6 +345,9 @@ interface NutritionDao {
     @Query("SELECT * FROM weight_logs ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLatestWeightLogSync(): WeightLog?
 
+    @Delete
+    suspend fun deleteWeightLog(log: WeightLog)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWaterLog(log: WaterLog)
 
@@ -339,6 +357,9 @@ interface NutritionDao {
     @Query("SELECT * FROM water_logs WHERE date = :date ORDER BY id DESC")
     fun getWaterLogsForDate(date: String): Flow<List<WaterLog>>
 
+    @Delete
+    suspend fun deleteWaterLog(log: WaterLog)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCoachMessage(message: CoachMessage)
 
@@ -347,6 +368,13 @@ interface NutritionDao {
 
     @Query("DELETE FROM coach_messages")
     suspend fun clearAllCoachMessages()
+}
+
+// Migration from v5 to v6: adds waterTargetMl column to user_profile
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE user_profile ADD COLUMN waterTargetMl INTEGER NOT NULL DEFAULT 3000")
+    }
 }
 
 @Database(
@@ -364,7 +392,7 @@ interface NutritionDao {
         WaterLog::class,
         CoachMessage::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class WorkoutDatabase : RoomDatabase() {
@@ -383,7 +411,8 @@ abstract class WorkoutDatabase : RoomDatabase() {
                     WorkoutDatabase::class.java,
                     "workout_database"
                 )
-                .fallbackToDestructiveMigration(true)
+                .addMigrations(MIGRATION_5_6)
+                .fallbackToDestructiveMigration(true) // safety net for unexpected versions
                 .build()
                 INSTANCE = instance
                 instance
@@ -391,4 +420,3 @@ abstract class WorkoutDatabase : RoomDatabase() {
         }
     }
 }
-

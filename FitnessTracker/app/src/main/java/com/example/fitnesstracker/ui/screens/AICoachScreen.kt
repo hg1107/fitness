@@ -393,14 +393,36 @@ fun AICoachScreen(
                 }
             }
 
-            // Quick suggestion chips
-            val suggestions = listOf(
-                "What should I eat tonight?",
-                "How can I hit my protein goal?",
-                "Suggest a vegetarian meal with 40g protein.",
-                "Give me a 700 calorie bulking meal."
+            // Context-aware quick suggestion chips
+            val foodLogs by viewModel.todayFoodLogs.collectAsState(initial = emptyList())
+            val goal = viewModel.calculateGoal(
+                gender = profile.gender,
+                age = profile.age,
+                weightKg = profile.weightKg,
+                heightCm = profile.heightCm,
+                activityLevel = profile.activityLevel,
+                fitnessGoal = profile.fitnessGoal
             )
-            
+            val consumedCalories = foodLogs.sumOf { it.calories * it.quantity }
+            val consumedProtein = foodLogs.sumOf { it.protein * it.quantity }
+
+            val suggestions = buildList {
+                if (consumedCalories < goal.calories * 0.5) {
+                    add("What should I eat to hit ${goal.calories.toInt()} kcal today?")
+                } else if (consumedCalories > goal.calories * 0.95) {
+                    add("I've almost hit my calorie goal. What light snacks can I have?")
+                } else {
+                    add("What should I eat for dinner tonight?")
+                }
+                if (consumedProtein < goal.protein * 0.6) {
+                    add("How can I hit ${goal.protein.toInt()}g protein today?")
+                } else {
+                    add("Am I on track for my ${profile.fitnessGoal} goal today?")
+                }
+                add("Give me a meal plan for the next 3 days.")
+                add("What's a high-protein vegetarian meal under 500 kcal?")
+            }
+
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()

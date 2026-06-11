@@ -45,6 +45,10 @@ class NutritionViewModel(
     private val _currentDate = MutableStateFlow(getCurrentDateString())
     val currentDate: StateFlow<String> = _currentDate.asStateFlow()
 
+    // Date offset in days from today (0 = today, -1 = yesterday, etc.)
+    private val _dateOffsetDays = MutableStateFlow(0)
+    val dateOffsetDays: StateFlow<Int> = _dateOffsetDays.asStateFlow()
+
     val userProfile: Flow<UserProfile?> = activityDao.getUserProfile()
 
     val coachMessages: Flow<List<CoachMessage>> = nutritionDao.getAllCoachMessages()
@@ -156,6 +160,33 @@ class NutritionViewModel(
         _currentDate.value = date
     }
 
+    fun goToPreviousDay() {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val cal = Calendar.getInstance()
+        cal.time = sdf.parse(_currentDate.value) ?: cal.time
+        cal.add(Calendar.DAY_OF_YEAR, -1)
+        _currentDate.value = sdf.format(cal.time)
+        _dateOffsetDays.value--
+    }
+
+    fun goToNextDay() {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val today = getCurrentDateString()
+        if (_currentDate.value == today) return // Can't go beyond today
+        val cal = Calendar.getInstance()
+        cal.time = sdf.parse(_currentDate.value) ?: cal.time
+        cal.add(Calendar.DAY_OF_YEAR, 1)
+        _currentDate.value = sdf.format(cal.time)
+        _dateOffsetDays.value++
+    }
+
+    fun goToToday() {
+        _currentDate.value = getCurrentDateString()
+        _dateOffsetDays.value = 0
+    }
+
+    fun isViewingToday(): Boolean = _currentDate.value == getCurrentDateString()
+
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
     }
@@ -250,6 +281,17 @@ class NutritionViewModel(
         }
     }
 
+    // Delete the last water log entry for today
+    fun undoLastWaterLog() {
+        viewModelScope.launch {
+            val logs = nutritionDao.getWaterLogsForDate(_currentDate.value).firstOrNull()
+            val lastLog = logs?.firstOrNull() // ordered DESC
+            if (lastLog != null) {
+                nutritionDao.deleteWaterLog(lastLog)
+            }
+        }
+    }
+
     // Log weight
     fun logWeight(weightKg: Double) {
         viewModelScope.launch {
@@ -266,6 +308,51 @@ class NutritionViewModel(
                     currentProfile.copy(weightKg = weightKg)
                 )
             }
+        }
+    }
+
+    // Delete a weight log entry
+    fun deleteWeightLog(log: WeightLog) {
+        viewModelScope.launch {
+            nutritionDao.deleteWeightLog(log)
+        }
+    }
+
+    // Full profile update (used by ProfileScreen)
+    fun updateUserProfile(
+        name: String,
+        age: Int,
+        gender: String,
+        weightKg: Double,
+        heightCm: Double,
+        fitnessGoal: String,
+        activityLevel: String,
+        dietaryPreference: String,
+        preferredUnits: String,
+        foodLikes: String,
+        foodDislikes: String,
+        foodAllergies: String,
+        waterTargetMl: Int
+    ) {
+        viewModelScope.launch {
+            val current = activityDao.getUserProfileSync() ?: UserProfile()
+            activityDao.insertUserProfile(
+                current.copy(
+                    name = name.trim().ifEmpty { "Athlete" },
+                    age = age,
+                    gender = gender,
+                    weightKg = weightKg,
+                    heightCm = heightCm,
+                    fitnessGoal = fitnessGoal,
+                    activityLevel = activityLevel,
+                    dietaryPreference = dietaryPreference,
+                    preferredUnits = preferredUnits,
+                    foodLikes = foodLikes,
+                    foodDislikes = foodDislikes,
+                    foodAllergies = foodAllergies,
+                    waterTargetMl = waterTargetMl
+                )
+            )
         }
     }
 
@@ -312,6 +399,9 @@ class NutritionViewModel(
             nutritionDao.deleteSavedMeal(meal)
         }
     }
+
+    // Alias for NutritionScreen: load a saved meal into a specific meal slot
+    fun loadSavedMeal(meal: SavedMeal, mealType: String) = logSavedMeal(meal, mealType)
 
     // Offline heuristic-based AI text entry parser
     fun parseTextEntry(text: String) {
