@@ -1,0 +1,752 @@
+package com.example.fitnesstracker.ui.screens
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.core.content.ContextCompat
+import com.example.fitnesstracker.service.LocationPoint
+import com.example.fitnesstracker.service.TrackingState
+import com.example.fitnesstracker.ui.ActivityViewModel
+import java.util.Locale
+
+// Brand Colors
+val StravaOrange = Color(0xFFFC4C02)
+val DarkBackground = Color(0xFF000000)
+val SurfaceCard = Color(0xFF1C1C1E)
+val OutlinedBorder = Color(0xFF2C2C2E)
+val MutedText = Color(0xFF8E8E93)
+val BrightText = Color(0xFFFFFFFF)
+
+@Composable
+fun TrackScreen(
+    viewModel: ActivityViewModel,
+    onActivitySaved: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val trackingState by viewModel.trackingState.collectAsState()
+    val userProfile by viewModel.userProfile.collectAsState()
+    val context = LocalContext.current
+
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var selectedActivityType by remember { mutableStateOf("Running") }
+    var showCancelConfirmDialog by remember { mutableStateOf(false) }
+
+    // Launcher for location and notification permissions
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+        val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
+        if (fineGranted || coarseGranted) {
+            viewModel.startActivity(selectedActivityType)
+        }
+    }
+
+    fun startTrackingClick() {
+        val finePerm = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+        val coarsePerm = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION)
+        val notifPerm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+        } else PackageManager.PERMISSION_GRANTED
+
+        val permissionsToRequest = mutableListOf<String>()
+        if (finePerm != PackageManager.PERMISSION_GRANTED) permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (coarsePerm != PackageManager.PERMISSION_GRANTED) permissionsToRequest.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && notifPerm != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        if (permissionsToRequest.isEmpty()) {
+            viewModel.startActivity(selectedActivityType)
+        } else {
+            permissionLauncher.launch(permissionsToRequest.toTypedArray())
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(DarkBackground)
+    ) {
+        if (!trackingState.isTracking) {
+            // Pre-Activity Dashboard Layout
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Header
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Record Activity",
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BrightText
+                    )
+                    Text(
+                        text = "Select type and begin tracking",
+                        fontSize = 14.sp,
+                        color = MutedText
+                    )
+                }
+
+                // Activity Type selector
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Activity Type",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = BrightText,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("Running", "Walking", "Cycling").forEach { type ->
+                            val isSelected = selectedActivityType == type
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSelected) StravaOrange else SurfaceCard)
+                                    .border(
+                                        width = 1.dp,
+                                        color = if (isSelected) StravaOrange else OutlinedBorder,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable { selectedActivityType = type }
+                                    .padding(vertical = 14.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = type,
+                                    color = if (isSelected) DarkBackground else BrightText,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Profile Configuration cards
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // Profile & Settings Card
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(SurfaceCard)
+                            .border(1.dp, OutlinedBorder, RoundedCornerShape(12.dp))
+                            .clickable { showSettingsDialog = true }
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("Profile & Settings", fontSize = 13.sp, color = MutedText)
+                            val isImperial = userProfile.preferredUnits == "Imperial"
+                            val displayWeight = if (isImperial) {
+                                "${String.format(Locale.US, "%.1f", com.example.fitnesstracker.util.UnitConverter.kgToLbs(userProfile.weightKg))} lbs"
+                            } else {
+                                "${userProfile.weightKg} kg"
+                            }
+                            Text("${userProfile.name} • $displayWeight • ${userProfile.preferredUnits}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = BrightText)
+                        }
+                        Text("Edit", color = StravaOrange, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                // Big Start Button
+                Button(
+                    onClick = { startTrackingClick() },
+                    colors = ButtonDefaults.buttonColors(containerColor = StravaOrange, contentColor = DarkBackground),
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .size(110.dp)
+                        .border(4.dp, BrightText.copy(alpha = 0.2f), CircleShape),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text(
+                        text = "START",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.sp
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        } else {
+            // Live Tracking Dashboard Layout
+            val elapsedFormatted = formatDuration(trackingState.elapsedSeconds)
+            val distanceKm = trackingState.distanceMeters / 1000.0
+            
+            Column(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                // Header Stats Bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(SurfaceCard)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = trackingState.activityType,
+                        color = StravaOrange,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                    
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = when {
+                            trackingState.gpsStatus.contains("Lock") || trackingState.gpsStatus.contains("Connected") -> Color(0xFF2ECC71)
+                            trackingState.gpsStatus.contains("Weak") -> Color(0xFFF1C40F)
+                            else -> Color(0xFFE74C3C)
+                        },
+                        modifier = Modifier.padding(vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = trackingState.gpsStatus.uppercase(),
+                            color = DarkBackground,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                // Active Stats Dashboard
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(SurfaceCard)
+                        .padding(horizontal = 16.dp).padding(bottom = 16.dp)
+                ) {
+                    // Large Time Counter
+                    Text(
+                        text = elapsedFormatted,
+                        fontSize = 62.sp,
+                        fontWeight = FontWeight.Light,
+                        color = BrightText,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        val isImperial = userProfile.preferredUnits == "Imperial"
+
+                        // Distance Metric
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            val displayDistance = if (isImperial) {
+                                com.example.fitnesstracker.util.UnitConverter.metersToMiles(trackingState.distanceMeters)
+                            } else {
+                                com.example.fitnesstracker.util.UnitConverter.metersToKm(trackingState.distanceMeters)
+                            }
+                            Text(
+                                text = String.format(Locale.US, "%.2f", displayDistance),
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BrightText
+                            )
+                            Text(if (isImperial) "DISTANCE (MI)" else "DISTANCE (KM)", fontSize = 11.sp, color = MutedText, fontWeight = FontWeight.Bold)
+                        }
+
+                        // Speed / Pace Metric
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            val metricValue: String
+                            val metricLabel: String
+                            
+                            if (trackingState.activityType == "Cycling") {
+                                val speedVal = if (isImperial) {
+                                    com.example.fitnesstracker.util.UnitConverter.mpsToMph(trackingState.currentSpeedMps)
+                                } else {
+                                    com.example.fitnesstracker.util.UnitConverter.mpsToKmh(trackingState.currentSpeedMps)
+                                }
+                                metricValue = String.format(Locale.US, "%.1f", speedVal)
+                                metricLabel = if (isImperial) "SPEED (MPH)" else "SPEED (KM/H)"
+                            } else {
+                                val paceVal = if (isImperial) {
+                                    com.example.fitnesstracker.util.UnitConverter.paceKmToMile(trackingState.currentPaceSecondsPerKm)
+                                } else {
+                                    trackingState.currentPaceSecondsPerKm
+                                }
+                                metricValue = formatPace(paceVal)
+                                metricLabel = if (isImperial) "PACE (/MI)" else "PACE (/KM)"
+                            }
+                            
+                            Text(
+                                text = metricValue,
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BrightText
+                            )
+                            Text(metricLabel, fontSize = 11.sp, color = MutedText, fontWeight = FontWeight.Bold)
+                        }
+
+                        // Calories Metric
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = trackingState.calories.toInt().toString(),
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BrightText
+                            )
+                            Text("CALORIES (KCAL)", fontSize = 11.sp, color = MutedText, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                // Map View Area (occupies weight)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .background(Color.DarkGray)
+                ) {
+                    ActivityMapView(
+                        mapboxToken = userProfile.mapboxToken,
+                        routePoints = trackingState.routePoints,
+                        currentLocation = trackingState.routePoints.lastOrNull(),
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // Live Tracking Control Dashboard
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(SurfaceCard)
+                        .padding(vertical = 20.dp, horizontal = 24.dp),
+                    horizontalArrangement = Arrangement.SpaceAround,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (trackingState.isPaused) {
+                        // Resuming and Stopping options
+                        Button(
+                            onClick = { showCancelConfirmDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE74C3C), contentColor = BrightText),
+                            shape = CircleShape,
+                            modifier = Modifier.size(70.dp),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text("DISCARD", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = { viewModel.resumeActivity() },
+                            colors = ButtonDefaults.buttonColors(containerColor = StravaOrange, contentColor = DarkBackground),
+                            shape = CircleShape,
+                            modifier = Modifier.size(90.dp),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Resume", modifier = Modifier.size(40.dp))
+                        }
+
+                        Button(
+                            onClick = {
+                                viewModel.saveCompletedActivity("") { activityId ->
+                                    onActivitySaved(activityId)
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2ECC71), contentColor = DarkBackground),
+                            shape = CircleShape,
+                            modifier = Modifier.size(70.dp),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text("FINISH", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        // Single Pause button
+                        Button(
+                            onClick = { viewModel.pauseActivity() },
+                            colors = ButtonDefaults.buttonColors(containerColor = BrightText, contentColor = DarkBackground),
+                            shape = CircleShape,
+                            modifier = Modifier.size(80.dp),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text("PAUSE", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Profile & Settings Dialog
+    if (showSettingsDialog) {
+        var nameInput by remember { mutableStateOf(userProfile.name) }
+        var ageInput by remember { mutableStateOf(userProfile.age.toString()) }
+        var weightInput by remember { mutableStateOf(
+            if (userProfile.preferredUnits == "Imperial") {
+                String.format(Locale.US, "%.1f", com.example.fitnesstracker.util.UnitConverter.kgToLbs(userProfile.weightKg))
+            } else {
+                userProfile.weightKg.toString()
+            }
+        ) }
+        var heightInput by remember { mutableStateOf(
+            if (userProfile.preferredUnits == "Imperial") {
+                String.format(Locale.US, "%.1f", com.example.fitnesstracker.util.UnitConverter.cmToInches(userProfile.heightCm))
+            } else {
+                userProfile.heightCm.toString()
+            }
+        ) }
+        var unitInput by remember { mutableStateOf(userProfile.preferredUnits) }
+        var tokenInput by remember { mutableStateOf(userProfile.mapboxToken) }
+
+        Dialog(onDismissRequest = { showSettingsDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = SurfaceCard,
+                border = BorderStroke(1.dp, OutlinedBorder),
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("Profile & Settings", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = BrightText)
+                    
+                    OutlinedTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it },
+                        label = { Text("Name", color = MutedText) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = BrightText,
+                            unfocusedTextColor = BrightText,
+                            focusedBorderColor = StravaOrange,
+                            unfocusedBorderColor = OutlinedBorder
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = ageInput,
+                            onValueChange = { ageInput = it.filter { c -> c.isDigit() } },
+                            label = { Text("Age", color = MutedText) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = BrightText,
+                                unfocusedTextColor = BrightText,
+                                focusedBorderColor = StravaOrange,
+                                unfocusedBorderColor = OutlinedBorder
+                            ),
+                            modifier = Modifier.weight(1.5f)
+                        )
+
+                        // Preferred units selector
+                        Column(modifier = Modifier.weight(2f)) {
+                            Text("Units", fontSize = 11.sp, color = MutedText, modifier = Modifier.padding(start = 4.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(DarkBackground)
+                                    .border(1.dp, OutlinedBorder, RoundedCornerShape(8.dp))
+                                    .padding(2.dp)
+                            ) {
+                                listOf("Metric", "Imperial").forEach { unit ->
+                                    val isSelected = unitInput == unit
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isSelected) StravaOrange else Color.Transparent)
+                                            .clickable { 
+                                                val oldUnit = unitInput
+                                                if (oldUnit != unit) {
+                                                    unitInput = unit
+                                                    val weightVal = weightInput.toDoubleOrNull() ?: 0.0
+                                                    val heightVal = heightInput.toDoubleOrNull() ?: 0.0
+                                                    if (unit == "Imperial") {
+                                                        weightInput = String.format(Locale.US, "%.1f", com.example.fitnesstracker.util.UnitConverter.kgToLbs(weightVal))
+                                                        heightInput = String.format(Locale.US, "%.1f", com.example.fitnesstracker.util.UnitConverter.cmToInches(heightVal))
+                                                    } else {
+                                                        weightInput = String.format(Locale.US, "%.1f", com.example.fitnesstracker.util.UnitConverter.lbsToKg(weightVal))
+                                                        heightInput = String.format(Locale.US, "%.1f", com.example.fitnesstracker.util.UnitConverter.inchesToCm(heightVal))
+                                                    }
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = unit,
+                                            color = if (isSelected) DarkBackground else BrightText,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val weightLabel = if (unitInput == "Imperial") "Weight (lbs)" else "Weight (kg)"
+                        OutlinedTextField(
+                            value = weightInput,
+                            onValueChange = { weightInput = it },
+                            label = { Text(weightLabel, color = MutedText) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = BrightText,
+                                unfocusedTextColor = BrightText,
+                                focusedBorderColor = StravaOrange,
+                                unfocusedBorderColor = OutlinedBorder
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        val heightLabel = if (unitInput == "Imperial") "Height (in)" else "Height (cm)"
+                        OutlinedTextField(
+                            value = heightInput,
+                            onValueChange = { heightInput = it },
+                            label = { Text(heightLabel, color = MutedText) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = BrightText,
+                                unfocusedTextColor = BrightText,
+                                focusedBorderColor = StravaOrange,
+                                unfocusedBorderColor = OutlinedBorder
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = tokenInput,
+                        onValueChange = { tokenInput = it },
+                        label = { Text("Mapbox Access Token", color = MutedText) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = BrightText,
+                            unfocusedTextColor = BrightText,
+                            focusedBorderColor = StravaOrange,
+                            unfocusedBorderColor = OutlinedBorder
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { showSettingsDialog = false }) {
+                            Text("Cancel", color = BrightText)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                val finalWeight = weightInput.toDoubleOrNull() ?: 70.0
+                                val finalHeight = heightInput.toDoubleOrNull() ?: 175.0
+                                val savedWeight = if (unitInput == "Imperial") com.example.fitnesstracker.util.UnitConverter.lbsToKg(finalWeight) else finalWeight
+                                val savedHeight = if (unitInput == "Imperial") com.example.fitnesstracker.util.UnitConverter.inchesToCm(finalHeight) else finalHeight
+                                
+                                viewModel.updateUserProfile(
+                                    name = nameInput,
+                                    age = ageInput.toIntOrNull() ?: 30,
+                                    weightKg = savedWeight,
+                                    heightCm = savedHeight,
+                                    preferredUnits = unitInput,
+                                    mapboxToken = tokenInput
+                                )
+                                showSettingsDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = StravaOrange, contentColor = DarkBackground)
+                        ) {
+                            Text("Save")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Stop and Discard activity confirmation dialog
+    if (showCancelConfirmDialog) {
+        Dialog(onDismissRequest = { showCancelConfirmDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = SurfaceCard,
+                border = BorderStroke(1.dp, OutlinedBorder),
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text("Discard Workout?", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = BrightText)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("This activity details and GPS coordinates will be permanently deleted and cannot be recovered.", fontSize = 14.sp, color = MutedText)
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { showCancelConfirmDialog = false }) {
+                            Text("Keep Tracking", color = BrightText)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                viewModel.discardActivity()
+                                showCancelConfirmDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE74C3C), contentColor = BrightText)
+                        ) {
+                            Text("Discard", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ActivityMapView(
+    mapboxToken: String,
+    routePoints: List<LocationPoint>,
+    currentLocation: LocationPoint?,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var isMapInitialized by remember { mutableStateOf(false) }
+
+    // Convert routePoints to JSON
+    val pointsJson = remember(routePoints) {
+        val sb = StringBuilder()
+        sb.append("[")
+        routePoints.forEachIndexed { index, p ->
+            sb.append("{\"latitude\":${p.latitude},\"longitude\":${p.longitude}}")
+            if (index < routePoints.size - 1) sb.append(",")
+        }
+        sb.append("]")
+        sb.toString()
+    }
+
+    AndroidView(
+        factory = { ctx ->
+            WebView(ctx).apply {
+                webViewRef = this
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.allowFileAccess = true
+                
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        isMapInitialized = true
+                        
+                        val startLat = currentLocation?.latitude ?: 0.0
+                        val startLon = currentLocation?.longitude ?: 0.0
+                        evaluateJavascript("initMap('$mapboxToken', $startLat, $startLon)", null)
+                        
+                        if (routePoints.isNotEmpty()) {
+                            evaluateJavascript("setRoute('$pointsJson')", null)
+                        }
+                    }
+                }
+                loadUrl("file:///android_asset/map.html")
+            }
+        },
+        update = { webView ->
+            if (isMapInitialized) {
+                if (currentLocation != null) {
+                    webView.evaluateJavascript("updateCurrentLocation(${currentLocation.latitude}, ${currentLocation.longitude})", null)
+                }
+                if (routePoints.isNotEmpty()) {
+                    webView.evaluateJavascript("setRoute('$pointsJson')", null)
+                } else {
+                    webView.evaluateJavascript("clearRoute()", null)
+                }
+            }
+        },
+        modifier = modifier
+    )
+}
+
+// Global Formatter Helpers
+fun formatDuration(seconds: Long): String {
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    val s = seconds % 60
+    return if (h > 0) {
+        String.format("%d:%02d:%02d", h, m, s)
+    } else {
+        String.format("%02d:%02d", m, s)
+    }
+}
+
+fun formatPace(paceSecPerKm: Double): String {
+    if (paceSecPerKm <= 0.0 || paceSecPerKm.isInfinite() || paceSecPerKm.isNaN()) return "--:--"
+    val mins = (paceSecPerKm / 60.0).toInt()
+    val secs = (paceSecPerKm % 60.0).toInt()
+    return String.format("%d:%02d", mins, secs)
+}
