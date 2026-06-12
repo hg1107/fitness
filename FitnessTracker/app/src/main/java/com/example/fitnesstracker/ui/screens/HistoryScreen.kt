@@ -50,6 +50,7 @@ import androidx.compose.foundation.verticalScroll
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.fitnesstracker.util.formatDuration
 
 @Composable
 fun HistoryScreen(
@@ -88,7 +89,7 @@ fun HistoryScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // 3-Way Segmented Tab Control
+        // Fix #7/#14: Use consistent StravaOrange indicator for all three tabs
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -97,53 +98,23 @@ fun HistoryScreen(
                 .border(1.dp, BorderGray, RoundedCornerShape(8.dp))
                 .padding(3.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (selectedTab == 0) White else Color.Transparent)
-                    .clickable { selectedTab = 0 }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Workouts",
-                    color = if (selectedTab == 0) Black else LightGray,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (selectedTab == 1) StravaOrange else Color.Transparent)
-                    .clickable { selectedTab = 1 }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Activities",
-                    color = if (selectedTab == 1) DarkBackground else LightGray,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (selectedTab == 2) White else Color.Transparent)
-                    .clickable { selectedTab = 2 }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Analysis",
-                    color = if (selectedTab == 2) Black else LightGray,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
+            listOf("Workouts", "Activities", "Analysis").forEachIndexed { index, label ->
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (selectedTab == index) StravaOrange else Color.Transparent)
+                        .clickable { selectedTab = index }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        color = if (selectedTab == index) DarkBackground else LightGray,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 

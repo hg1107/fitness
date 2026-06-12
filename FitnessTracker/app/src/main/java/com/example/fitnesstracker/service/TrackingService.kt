@@ -55,6 +55,8 @@ class TrackingService : Service() {
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     private var weightKg: Double = 70.0 // Default fallback weight
+    // Fix #8: cache preferred units so the notification shows the right distance unit
+    private var preferredUnits: String = "Metric"
 
     // Set on resume so the distance traveled while paused is not added to the workout
     private var skipNextDistanceSegment = false
@@ -89,6 +91,11 @@ class TrackingService : Service() {
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         createNotificationChannel()
         loadUserWeight()
+        // Fix #4: Reset static state on cold start so stale isTracking=true
+        // from a previous process death cannot cause ghost tracking
+        if (!_trackingState.value.isTracking) {
+            _trackingState.value = TrackingState()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -143,7 +150,12 @@ class TrackingService : Service() {
     private fun getNotification(state: TrackingState): Notification {
         val title = "${state.activityType} Session"
         val timeFormatted = formatDuration(state.elapsedSeconds)
-        val distFormatted = String.format(java.util.Locale.US, "%.2f km", state.distanceMeters / 1000.0)
+        // Fix #8: Show distance in the user's preferred unit (km or miles)
+        val distFormatted = if (preferredUnits == "Imperial") {
+            String.format(java.util.Locale.US, "%.2f mi", state.distanceMeters * 0.000621371)
+        } else {
+            String.format(java.util.Locale.US, "%.2f km", state.distanceMeters / 1000.0)
+        }
         val text = "$timeFormatted | $distFormatted | ${state.gpsStatus}"
 
         val intent = Intent(this, MainActivity::class.java).apply {
@@ -181,6 +193,8 @@ class TrackingService : Service() {
                 val profile = db.activityDao().getUserProfileSync()
                 if (profile != null) {
                     weightKg = profile.weightKg
+                    // Fix #8: also cache preferred units
+                    preferredUnits = profile.preferredUnits
                 }
             } catch (e: Exception) {
                 e.printStackTrace()

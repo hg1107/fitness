@@ -321,8 +321,16 @@ interface NutritionDao {
     @Query("SELECT * FROM food_logs ORDER BY date DESC")
     fun getAllFoodLogs(): Flow<List<FoodLog>>
 
+    // Fix #19: SQL-level weekly filter to avoid full-table scan + in-memory filtering
+    @Query("SELECT * FROM food_logs WHERE date >= :since ORDER BY date DESC")
+    fun getFoodLogsSince(since: String): Flow<List<FoodLog>>
+
     @Query("SELECT * FROM water_logs ORDER BY date DESC")
     fun getAllWaterLogs(): Flow<List<WaterLog>>
+
+    // Fix #19: SQL-level weekly filter for water logs
+    @Query("SELECT * FROM water_logs WHERE date >= :since ORDER BY date DESC")
+    fun getWaterLogsSince(since: String): Flow<List<WaterLog>>
 
     @Query("SELECT DISTINCT foodName FROM food_logs ORDER BY id DESC LIMIT 20")
     fun getRecentFoods(): Flow<List<String>>
@@ -411,6 +419,9 @@ abstract class WorkoutDatabase : RoomDatabase() {
                     WorkoutDatabase::class.java,
                     "workout_database"
                 )
+                // Fix #26: versions 1-4 have no explicit migrations; users on those
+                // versions get a destructive reset. Version 5→6 is safe (addColumn only).
+                .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
                 .addMigrations(MIGRATION_5_6)
                 .build()
                 INSTANCE = instance

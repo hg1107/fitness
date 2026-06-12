@@ -23,6 +23,8 @@ import com.example.fitnesstracker.data.ActivityRecord
 import com.example.fitnesstracker.service.LocationPoint
 import com.example.fitnesstracker.ui.ActivityViewModel
 import kotlinx.coroutines.flow.first
+import com.example.fitnesstracker.util.formatDuration
+import com.example.fitnesstracker.util.formatPace
 
 @Composable
 fun ActivitySummaryScreen(

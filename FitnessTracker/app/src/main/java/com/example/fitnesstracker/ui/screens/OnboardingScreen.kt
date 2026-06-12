@@ -161,7 +161,7 @@ fun OnboardingScreen(
                             1 -> StepName(name = name, onNameChange = { name = it })
                             2 -> StepAgeGender(
                                 age = age,
-                                onAgeChange = { age = it },
+                                onAgeChange = { age = it.filter { c -> c.isDigit() } },
                                 selectedGender = gender,
                                 onGenderChange = { gender = it }
                             )
@@ -218,14 +218,18 @@ fun OnboardingScreen(
                         step++
                     } else {
                         val savedWeight = if (preferredUnits == "Imperial") {
-                            com.example.fitnesstracker.util.UnitConverter.lbsToKg(weightStr.toDouble())
+                            com.example.fitnesstracker.util.UnitConverter.lbsToKg(
+                                weightStr.toDoubleOrNull() ?: 70.0
+                            )
                         } else {
-                            weightStr.toDouble()
+                            weightStr.toDoubleOrNull() ?: 70.0
                         }
                         val savedHeight = if (preferredUnits == "Imperial") {
-                            com.example.fitnesstracker.util.UnitConverter.inchesToCm(heightStr.toDouble())
+                            com.example.fitnesstracker.util.UnitConverter.inchesToCm(
+                                heightStr.toDoubleOrNull() ?: 170.0
+                            )
                         } else {
-                            heightStr.toDouble()
+                            heightStr.toDoubleOrNull() ?: 170.0
                         }
                         viewModel.saveUserProfile(
                             name = name.trim(),
@@ -267,7 +271,7 @@ fun OnboardingScreen(
 }
 
 @Composable
-fun StepName(name: String, onNameChange: (String) -> Unit) {
+private fun StepName(name: String, onNameChange: (String) -> Unit) {
     Text("Let's get started", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = White)
     Spacer(modifier = Modifier.height(8.dp))
     Text("What should we call you?", fontSize = 16.sp, color = MediumGray)
@@ -291,7 +295,7 @@ fun StepName(name: String, onNameChange: (String) -> Unit) {
 }
 
 @Composable
-fun StepAgeGender(
+private fun StepAgeGender(
     age: String,
     onAgeChange: (String) -> Unit,
     selectedGender: String,
@@ -327,7 +331,7 @@ fun StepAgeGender(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        val genders = listOf("Male", "Female")
+        val genders = listOf("Male", "Female", "Other")
         genders.forEach { gender ->
             val isSelected = gender == selectedGender
             Card(
@@ -358,7 +362,7 @@ fun StepAgeGender(
 }
 
 @Composable
-fun StepStats(
+private fun StepStats(
     weight: String,
     onWeightChange: (String) -> Unit,
     height: String,
@@ -445,7 +449,7 @@ fun StepStats(
 }
 
 @Composable
-fun StepGoal(selectedGoal: String, onGoalChange: (String) -> Unit) {
+private fun StepGoal(selectedGoal: String, onGoalChange: (String) -> Unit) {
     Text("What is your fitness goal?", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = White)
     Spacer(modifier = Modifier.height(8.dp))
     Text("We will adapt macro distributions accordingly.", fontSize = 15.sp, color = MediumGray)
@@ -506,7 +510,7 @@ fun StepGoal(selectedGoal: String, onGoalChange: (String) -> Unit) {
 }
 
 @Composable
-fun StepActivity(selectedActivity: String, onActivityChange: (String) -> Unit) {
+private fun StepActivity(selectedActivity: String, onActivityChange: (String) -> Unit) {
     Text("What is your activity level?", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = White)
     Spacer(modifier = Modifier.height(8.dp))
     Text("Helps accurately determine Total Daily Energy Expenditure (TDEE).", fontSize = 15.sp, color = MediumGray)
@@ -567,7 +571,7 @@ fun StepActivity(selectedActivity: String, onActivityChange: (String) -> Unit) {
 }
 
 @Composable
-fun StepDiet(selectedDiet: String, onDietChange: (String) -> Unit) {
+private fun StepDiet(selectedDiet: String, onDietChange: (String) -> Unit) {
     Text("Your dietary preference", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = White)
     Spacer(modifier = Modifier.height(8.dp))
     Text("We will filter out chicken/meat/dairy recommendations.", fontSize = 15.sp, color = MediumGray)
@@ -629,7 +633,7 @@ fun StepDiet(selectedDiet: String, onDietChange: (String) -> Unit) {
 }
 
 @Composable
-fun StepFoodPreferences(
+private fun StepFoodPreferences(
     likes: String,
     onLikesChange: (String) -> Unit,
     dislikes: String,

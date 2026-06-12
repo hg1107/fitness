@@ -44,7 +44,25 @@ fun ProfileScreen(
     modifier: Modifier = Modifier
 ) {
     val userProfileState by viewModel.userProfile.collectAsState(initial = null)
-    val profile = userProfileState ?: return
+
+    // Fix #1: Never use bare return inside a Composable — show a loading spinner instead
+    if (userProfileState == null) {
+        Scaffold(
+            modifier = modifier,
+            containerColor = Black
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = Color(0xFF00E676))
+            }
+        }
+        return
+    }
+    val profile = userProfileState!!
 
     // Editable state – pre-populated from profile
     var name by remember(profile.id) { mutableStateOf(profile.name) }
@@ -62,6 +80,14 @@ fun ProfileScreen(
     var waterTargetMl by remember(profile.id) { mutableStateOf(profile.waterTargetMl.toString()) }
 
     var saveSuccess by remember { mutableStateOf(false) }
+
+    // Fix #10: Auto-dismiss the "Profile saved" banner after 3 seconds
+    LaunchedEffect(saveSuccess) {
+        if (saveSuccess) {
+            kotlinx.coroutines.delay(3000)
+            saveSuccess = false
+        }
+    }
 
     val scrollState = rememberScrollState()
 

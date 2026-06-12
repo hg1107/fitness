@@ -3,7 +3,7 @@ package com.example.fitnesstracker.util
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
+import androidx.security.crypto.MasterKey
 
 /**
  * Encrypted key-value storage for sensitive values (API keys, tokens).
@@ -24,11 +24,14 @@ object SecureStore {
         synchronized(this) {
             if (prefs != null) return
             prefs = try {
-                val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
+                // Fix #6: Migrate from deprecated MasterKeys to MasterKey.Builder (API 23+)
+                val masterKey = MasterKey.Builder(context.applicationContext)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
                 EncryptedSharedPreferences.create(
-                    PREFS_FILE,
-                    masterKeyAlias,
                     context.applicationContext,
+                    PREFS_FILE,
+                    masterKey,
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                 )

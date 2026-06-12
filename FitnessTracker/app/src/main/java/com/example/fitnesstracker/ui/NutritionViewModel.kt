@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.fitnesstracker.data.*
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
@@ -70,26 +72,14 @@ class NutritionViewModel(
     // All weight logs
     val allWeightLogs: Flow<List<WeightLog>> = nutritionDao.getAllWeightLogs()
 
-    // Weekly food logs (last 7 days)
-    val weeklyFoodLogs: Flow<List<FoodLog>> = nutritionDao.getAllFoodLogs().map { logs ->
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val last7Days = (0..6).map { i ->
-            val cal = Calendar.getInstance()
-            cal.add(Calendar.DAY_OF_YEAR, -i)
-            sdf.format(cal.time)
-        }.toSet()
-        logs.filter { it.date in last7Days }
+    // Weekly food logs (last 7 days) — Fix #19: SQL-level date filter, reactive via _currentDate
+    val weeklyFoodLogs: Flow<List<FoodLog>> = _currentDate.flatMapLatest {
+        nutritionDao.getFoodLogsSince(getDateStringDaysAgo(6))
     }
 
-    // Weekly water logs (last 7 days)
-    val weeklyWaterLogs: Flow<List<WaterLog>> = nutritionDao.getAllWaterLogs().map { logs ->
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val last7Days = (0..6).map { i ->
-            val cal = Calendar.getInstance()
-            cal.add(Calendar.DAY_OF_YEAR, -i)
-            sdf.format(cal.time)
-        }.toSet()
-        logs.filter { it.date in last7Days }
+    // Weekly water logs (last 7 days) — Fix #19: SQL-level date filter, reactive via _currentDate
+    val weeklyWaterLogs: Flow<List<WaterLog>> = _currentDate.flatMapLatest {
+        nutritionDao.getWaterLogsSince(getDateStringDaysAgo(6))
     }
 
     // Saved meals
@@ -116,9 +106,10 @@ class NutritionViewModel(
     private val _parsedAIEntry = MutableStateFlow<List<ParsedFoodLogItem>>(emptyList())
     val parsedAIEntry: StateFlow<List<ParsedFoodLogItem>> = _parsedAIEntry.asStateFlow()
 
-    // Recommendations state
+    // Recommendations state — Fix #5: add distinctUntilChanged on food items to avoid
+    // recalculating on every unrelated food-log change
     val foodRecommendations: Flow<List<RecommendedFoodItem>> = combine(
-        nutritionDao.getAllFoodItems(),
+        nutritionDao.getAllFoodItems().distinctUntilChanged(),
         userProfile,
         todayFoodLogs
     ) { allFoods, profile, logs ->
@@ -730,32 +721,45 @@ class NutritionViewModel(
         return sdf.format(Date())
     }
 
-    // Manual quick serialization/deserialization for food logs list in saved meals
+    // Fix #19: Helper to compute a date string N days ago for SQL WHERE clauses
+    private fun getDateStringDaysAgo(days: Int): String {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.DAY_OF_YEAR, -days)
+        return sdf.format(cal.time)
+    }
+
+    // Fix #22: Use Gson for saved-meal serialization instead of fragile pipe/semicolon format
+    private val gson = Gson()
+
     private fun serializeLogsToJson(logs: List<FoodLog>): String {
-        // Since we don't have Gson/Moshi in imports, we can construct simple CSV/JSON or string serialization.
-        // String format: foodName|calories|protein|carbs|fat|fiber|quantity|servingUnit;foodName|...
-        return logs.joinToString(";") {
-            "${it.foodName}|${it.calories}|${it.protein}|${it.carbs}|${it.fat}|${it.fiber}|${it.quantity}|${it.servingUnit}"
-        }
+        return gson.toJson(logs)
     }
 
     private fun deserializeJsonToLogs(serialized: String): List<FoodLog> {
         if (serialized.isBlank()) return emptyList()
         return try {
-            serialized.split(";").map { item ->
-                val parts = item.split("|")
-                FoodLog(
-                    date = "",
-                    mealType = "",
-                    foodName = parts[0],
-                    calories = parts[1].toDouble(),
-                    protein = parts[2].toDouble(),
-                    carbs = parts[3].toDouble(),
-                    fat = parts[4].toDouble(),
-                    fiber = parts[5].toDouble(),
-                    quantity = parts[6].toDouble(),
-                    servingUnit = parts[7]
-                )
+            // Support both new Gson format and old pipe/semicolon format for backwards compatibility
+            if (serialized.trimStart().startsWith("[")) {
+                val type = object : TypeToken<List<FoodLog>>() {}.type
+                gson.fromJson(serialized, type) ?: emptyList()
+            } else {
+                // Legacy pipe/semicolon format — migrate on read
+                serialized.split(";").map { item ->
+                    val parts = item.split("|")
+                    FoodLog(
+                        date = "",
+                        mealType = "",
+                        foodName = parts[0],
+                        calories = parts[1].toDouble(),
+                        protein = parts[2].toDouble(),
+                        carbs = parts[3].toDouble(),
+                        fat = parts[4].toDouble(),
+                        fiber = parts[5].toDouble(),
+                        quantity = parts[6].toDouble(),
+                        servingUnit = parts[7]
+                    )
+                }
             }
         } catch (e: Exception) {
             emptyList()

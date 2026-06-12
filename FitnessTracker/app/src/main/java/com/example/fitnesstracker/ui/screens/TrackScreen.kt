@@ -43,6 +43,8 @@ import com.example.fitnesstracker.service.LocationPoint
 import com.example.fitnesstracker.service.TrackingState
 import com.example.fitnesstracker.ui.ActivityViewModel
 import com.example.fitnesstracker.data.ActivityRecord
+import com.example.fitnesstracker.util.formatDuration
+import com.example.fitnesstracker.util.formatPace
 import java.util.Locale
 
 // Brand Colors
@@ -610,11 +612,15 @@ fun TrackScreen(
         var tokenInput by remember { mutableStateOf(userProfile.mapboxToken) }
 
         Dialog(onDismissRequest = { showSettingsDialog = false }) {
+            // Fix #11: Constrain dialog height so keyboard doesn't push content off screen
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = SurfaceCard,
                 border = BorderStroke(1.dp, OutlinedBorder),
-                modifier = Modifier.fillMaxWidth().padding(16.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 500.dp)
+                    .padding(16.dp)
             ) {
                 Column(
                     modifier = Modifier
@@ -839,9 +845,25 @@ fun ActivityMapView(
     val context = LocalContext.current
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var isMapInitialized by remember { mutableStateOf(false) }
+    // Fix #21: track how many points were already sent to avoid re-sending the full route
+    var lastSentPointCount by remember { mutableStateOf(0) }
 
-    // Convert routePoints to JSON
-    val pointsJson = remember(routePoints) {
+    // Fix #21: Build only the new incremental points (delta) instead of the full array
+    val newPointsJson = remember(routePoints) {
+        if (routePoints.size <= lastSentPointCount) return@remember "[]"
+        val newPoints = routePoints.drop(lastSentPointCount)
+        val sb = StringBuilder()
+        sb.append("[")
+        newPoints.forEachIndexed { index, p ->
+            sb.append("{\"latitude\":${p.latitude},\"longitude\":${p.longitude}}")
+            if (index < newPoints.size - 1) sb.append(",")
+        }
+        sb.append("]")
+        sb.toString()
+    }
+
+    // For initial load we still need the full route
+    val fullPointsJson = remember(routePoints) {
         val sb = StringBuilder()
         sb.append("[")
         routePoints.forEachIndexed { index, p ->
@@ -863,9 +885,13 @@ fun ActivityMapView(
         factory = { ctx ->
             WebView(ctx).apply {
                 webViewRef = this
+                // Fix #15: Keep allowFileAccess=true for android_asset/ URLs (map.html),
+                // but disable cross-origin file:// reads to limit attack surface.
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
-                settings.allowFileAccess = true
+                settings.allowFileAccess = true           // needed for android_asset/
+                @Suppress("DEPRECATION")
+                settings.allowFileAccessFromFileURLs = false // prevents JS from reading other file://
                 
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
@@ -879,10 +905,13 @@ fun ActivityMapView(
                         val themeStr = if (isDarkMode) "dark" else "light"
                         evaluateJavascript("currentTheme = '$themeStr'", null)
                         
-                        evaluateJavascript("initMap('$mapboxToken', $startLat, $startLon)", null)
+                        // Fix #18: Use JSONObject.quote() to safely encode token in JS call
+                        val safeToken = org.json.JSONObject.quote(mapboxToken)
+                        evaluateJavascript("initMap($safeToken, $startLat, $startLon)", null)
                         
                         if (routePoints.isNotEmpty()) {
-                            evaluateJavascript("setRoute('$pointsJson', $fitRouteBounds)", null)
+                            evaluateJavascript("setRoute('$fullPointsJson', $fitRouteBounds)", null)
+                            lastSentPointCount = routePoints.size
                         }
                     }
                 }
@@ -894,10 +923,13 @@ fun ActivityMapView(
                 if (currentLocation != null) {
                     webView.evaluateJavascript("updateCurrentLocation(${currentLocation.latitude}, ${currentLocation.longitude})", null)
                 }
-                if (routePoints.isNotEmpty()) {
-                    webView.evaluateJavascript("setRoute('$pointsJson', $fitRouteBounds)", null)
-                } else {
+                // Fix #21: Send only the delta (new points) not the full route each update
+                if (routePoints.size > lastSentPointCount && newPointsJson != "[]") {
+                    webView.evaluateJavascript("appendRoute('$newPointsJson', $fitRouteBounds)", null)
+                    lastSentPointCount = routePoints.size
+                } else if (routePoints.isEmpty()) {
                     webView.evaluateJavascript("clearRoute()", null)
+                    lastSentPointCount = 0
                 }
             }
         },
@@ -905,21 +937,5 @@ fun ActivityMapView(
     )
 }
 
-// Global Formatter Helpers
-fun formatDuration(seconds: Long): String {
-    val h = seconds / 3600
-    val m = (seconds % 3600) / 60
-    val s = seconds % 60
-    return if (h > 0) {
-        String.format("%d:%02d:%02d", h, m, s)
-    } else {
-        String.format("%02d:%02d", m, s)
-    }
-}
-
-fun formatPace(paceSecPerKm: Double): String {
-    if (paceSecPerKm <= 0.0 || paceSecPerKm.isInfinite() || paceSecPerKm.isNaN()) return "--:--"
-    val mins = (paceSecPerKm / 60.0).toInt()
-    val secs = (paceSecPerKm % 60.0).toInt()
-    return String.format("%d:%02d", mins, secs)
-}
+// Note: formatDuration() and formatPace() are imported from com.example.fitnesstracker.util.FormatUtils
+// Fix #28: Moved to shared FormatUtils.kt so they can be used across screens

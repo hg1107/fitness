@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+import com.example.fitnesstracker.util.formatDuration
+import com.example.fitnesstracker.util.formatPace
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,6 +61,8 @@ fun ActivityDetailScreen(
         ) {
             CircularProgressIndicator(color = StravaOrange)
         }
+        // Note: return is only safe here because this is a full composable tree replacement
+        // (we render a complete Box and return, not an early return mid-composition).
         return
     }
 

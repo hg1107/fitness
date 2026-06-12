@@ -182,11 +182,11 @@ fun DashboardScreen(
                 }
             }
 
-            // Minimalist floating add button inside the screen
+            // Fix #12: Increase bottom padding to clear the bottom navigation bar (~72dp)
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(bottom = 16.dp, end = 8.dp)
+                    .padding(bottom = 88.dp, end = 8.dp)
             ) {
                 FloatingActionButton(
                     onClick = { showAddDialog = true },

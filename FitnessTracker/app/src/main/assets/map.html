@@ -347,6 +347,49 @@
             currentMarker = null;
         }
     }
+
+    // Fix #21: Append only new points to the existing route instead of re-sending the full array.
+    // This is called during live tracking with only the delta since the last update.
+    function appendRoute(newPointsJson, fitBounds) {
+        var newPoints = JSON.parse(newPointsJson);
+        if (!newPoints || newPoints.length === 0) return;
+
+        var normalized = newPoints.map(function(p) {
+            if (p.latitude !== undefined && p.longitude !== undefined) {
+                return [p.latitude, p.longitude];
+            } else if (Array.isArray(p)) {
+                return p;
+            }
+            return null;
+        }).filter(Boolean);
+
+        if (normalized.length === 0) return;
+
+        if (isMapboxEnabled && mapboxMap) {
+            var src = mapboxMap.getSource('route');
+            if (!src) {
+                // Source not yet initialised: treat as a full setRoute
+                setRoute(newPointsJson, fitBounds);
+                return;
+            }
+            var existing = src._data && src._data.geometry ? src._data.geometry.coordinates : [];
+            var appended = existing.concat(normalized.map(function(p) { return [p[1], p[0]]; }));
+            src.setData({
+                'type': 'Feature',
+                'properties': {},
+                'geometry': { 'type': 'LineString', 'coordinates': appended }
+            });
+        } else if (leafletMap) {
+            if (routeLayer) {
+                var latlngs = routeLayer.getLatLngs();
+                normalized.forEach(function(p) { latlngs.push(L.latLng(p[0], p[1])); });
+                routeLayer.setLatLngs(latlngs);
+            } else {
+                // No existing polyline yet — create one
+                routeLayer = L.polyline(normalized, { color: '#FC4C02', weight: 5 }).addTo(leafletMap);
+            }
+        }
+    }
 </script>
 </body>
 </html>

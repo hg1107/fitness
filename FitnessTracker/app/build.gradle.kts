@@ -114,4 +114,7 @@ dependencies {
 
   // Health Connect
   implementation(libs.androidx.health.connect.client)
+
+  // Gson: JSON serialization for saved meals (fix #22)
+  implementation("com.google.code.gson:gson:2.10.1")
 }
