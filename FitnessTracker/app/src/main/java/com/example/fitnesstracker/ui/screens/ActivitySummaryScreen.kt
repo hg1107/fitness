@@ -106,7 +106,6 @@ fun ActivitySummaryScreen(
         ) {
             if (mapPoints.isNotEmpty()) {
                 ActivityMapView(
-                    mapboxToken = userProfile.mapboxToken,
                     routePoints = mapPoints,
                     currentLocation = null, // don't show real-time GPS pulse dot
                     isDarkMode = isDarkMode,

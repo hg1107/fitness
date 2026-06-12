@@ -169,7 +169,6 @@ data class UserProfile(
     val weightKg: Double = 70.0,
     val heightCm: Double = 175.0,
     val preferredUnits: String = "Metric", // "Metric" or "Imperial"
-    val mapboxToken: String = "",
     val gender: String = "Male",
     val fitnessGoal: String = "Weight Maintenance",
     val activityLevel: String = "Moderately Active",
@@ -184,7 +183,6 @@ data class UserProfile(
     val mealTimings: String = "Breakfast: 8 AM, Lunch: 1:30 PM, Dinner: 8:30 PM",
     val gymSchedule: String = "Mon, Wed, Fri",
     val availableFoodsAtHome: String = "eggs, milk, paneer, oats, banana, rice, roti",
-    val geminiApiKey: String = "",
     val waterTargetMl: Int = 3000
 )
 
@@ -238,14 +236,6 @@ data class WaterLog(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val date: String, // YYYY-MM-DD
     val amountMl: Int
-)
-
-@Entity(tableName = "coach_messages")
-data class CoachMessage(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val timestamp: Long,
-    val sender: String, // "user" or "coach"
-    val text: String
 )
 
 @Dao
@@ -367,21 +357,66 @@ interface NutritionDao {
 
     @Delete
     suspend fun deleteWaterLog(log: WaterLog)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertCoachMessage(message: CoachMessage)
-
-    @Query("SELECT * FROM coach_messages ORDER BY timestamp ASC")
-    fun getAllCoachMessages(): Flow<List<CoachMessage>>
-
-    @Query("DELETE FROM coach_messages")
-    suspend fun clearAllCoachMessages()
 }
 
 // Migration from v5 to v6: adds waterTargetMl column to user_profile
 val MIGRATION_5_6 = object : Migration(5, 6) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE user_profile ADD COLUMN waterTargetMl INTEGER NOT NULL DEFAULT 3000")
+    }
+}
+
+// Migration from v6 to v7: removes API key/token columns and the old coach table.
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS user_profile_new (
+                id TEXT NOT NULL PRIMARY KEY,
+                name TEXT NOT NULL,
+                age INTEGER NOT NULL,
+                weightKg REAL NOT NULL,
+                heightCm REAL NOT NULL,
+                preferredUnits TEXT NOT NULL,
+                gender TEXT NOT NULL,
+                fitnessGoal TEXT NOT NULL,
+                activityLevel TEXT NOT NULL,
+                dietaryPreference TEXT NOT NULL,
+                onboardingComplete INTEGER NOT NULL,
+                foodLikes TEXT NOT NULL,
+                foodDislikes TEXT NOT NULL,
+                foodAllergies TEXT NOT NULL,
+                budget TEXT NOT NULL,
+                region TEXT NOT NULL,
+                preferredCuisine TEXT NOT NULL,
+                mealTimings TEXT NOT NULL,
+                gymSchedule TEXT NOT NULL,
+                availableFoodsAtHome TEXT NOT NULL,
+                waterTargetMl INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO user_profile_new (
+                id, name, age, weightKg, heightCm, preferredUnits, gender,
+                fitnessGoal, activityLevel, dietaryPreference, onboardingComplete,
+                foodLikes, foodDislikes, foodAllergies, budget, region,
+                preferredCuisine, mealTimings, gymSchedule, availableFoodsAtHome,
+                waterTargetMl
+            )
+            SELECT
+                id, name, age, weightKg, heightCm, preferredUnits, gender,
+                fitnessGoal, activityLevel, dietaryPreference, onboardingComplete,
+                foodLikes, foodDislikes, foodAllergies, budget, region,
+                preferredCuisine, mealTimings, gymSchedule, availableFoodsAtHome,
+                waterTargetMl
+            FROM user_profile
+            """.trimIndent()
+        )
+        db.execSQL("DROP TABLE user_profile")
+        db.execSQL("ALTER TABLE user_profile_new RENAME TO user_profile")
+        db.execSQL("DROP TABLE IF EXISTS coach_messages")
     }
 }
 
@@ -397,10 +432,9 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
         FoodLog::class,
         SavedMeal::class,
         WeightLog::class,
-        WaterLog::class,
-        CoachMessage::class
+        WaterLog::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class WorkoutDatabase : RoomDatabase() {
@@ -422,7 +456,7 @@ abstract class WorkoutDatabase : RoomDatabase() {
                 // Fix #26: versions 1-4 have no explicit migrations; users on those
                 // versions get a destructive reset. Version 5→6 is safe (addColumn only).
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
-                .addMigrations(MIGRATION_5_6)
+                .addMigrations(MIGRATION_5_6, MIGRATION_6_7)
                 .build()
                 INSTANCE = instance
                 instance

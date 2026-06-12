@@ -5,13 +5,9 @@
     <title>Activity Map</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     
-    <!-- Leaflet CSS/JS (For fallback or primary OSM map) -->
+    <!-- Leaflet CSS/JS (OpenStreetMap) -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-
-    <!-- Mapbox GL JS CSS/JS -->
-    <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet">
-    <script src="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js" defer></script>
 
     <style>
         body { margin: 0; padding: 0; background-color: #121212; color: #ffffff; }
@@ -25,85 +21,29 @@
 <body>
 <div id="map"></div>
 <script>
-    var map;
     var leafletMap = null;
-    var mapboxMap = null;
     var routeLayer = null;
     var startMarker = null;
     var endMarker = null;
     var currentMarker = null;
-    var isMapboxEnabled = false;
     var currentTheme = 'dark';
 
-    function initMap(mapboxToken, initialLat, initialLon) {
-        console.log("initMap called with token: " + mapboxToken + ", lat: " + initialLat + ", lon: " + initialLon + ", theme: " + currentTheme);
+    function initMap(initialLat, initialLon) {
+        console.log("initMap called with lat: " + initialLat + ", lon: " + initialLon + ", theme: " + currentTheme);
         var lat = initialLat || 0.0;
         var lon = initialLon || 0.0;
         var zoom = (lat === 0.0 && lon === 0.0) ? 2 : 15;
 
-        // Reset previous maps if any
+        // Reset previous map if any
         if (leafletMap) {
             leafletMap.remove();
             leafletMap = null;
         }
-        if (mapboxMap) {
-            mapboxMap.remove();
-            mapboxMap = null;
-        }
         document.getElementById('map').innerHTML = "";
 
-        // Try Mapbox if token is provided, otherwise fallback to Leaflet
-        if (mapboxToken && mapboxToken.trim() !== "" && mapboxToken.indexOf("YOUR_") !== 0) {
-            try {
-                mapboxgl.accessToken = mapboxToken;
-                var styleUrl = (currentTheme === 'light') ? 'mapbox://styles/mapbox/light-v11' : 'mapbox://styles/mapbox/dark-v11';
-                mapboxMap = new mapboxgl.Map({
-                    container: 'map',
-                    style: styleUrl,
-                    center: [lon, lat],
-                    zoom: zoom
-                });
-
-                mapboxMap.on('load', function () {
-                    isMapboxEnabled = true;
-                    // Add route source and layer
-                    mapboxMap.addSource('route', {
-                        'type': 'geojson',
-                        'data': {
-                            'type': 'Feature',
-                            'properties': {},
-                            'geometry': {
-                                'type': 'LineString',
-                                'coordinates': []
-                            }
-                        }
-                    });
-
-                    mapboxMap.addLayer({
-                        'id': 'route',
-                        'type': 'line',
-                        'source': 'route',
-                        'layout': {
-                            'line-join': 'round',
-                            'line-cap': 'round'
-                        },
-                        'paint': {
-                            'line-color': '#fc4c02', // Strava Orange!
-                            'line-width': 5
-                        }
-                    });
-                });
-                return;
-            } catch (e) {
-                console.error("Mapbox init failed, falling back to Leaflet OSM", e);
-            }
-        }
-
-        // Leaflet Fallback (OpenStreetMap)
-        isMapboxEnabled = false;
+        // Leaflet (OpenStreetMap via CartoDB Tiles)
         leafletMap = L.map('map', { zoomControl: false }).setView([lat, lon], zoom);
         
-        // Use a nice theme tile style
         var tileUrl = (currentTheme === 'light')
             ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
             : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
@@ -123,49 +63,7 @@
         var isDark = (theme === 'dark');
         console.log("setMapTheme called: " + theme);
 
-        if (isMapboxEnabled && mapboxMap) {
-            var styleUrl = isDark ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11';
-            
-            // Retrieve existing coordinates if path exists
-            var coords = [];
-            if (mapboxMap.getSource('route')) {
-                var data = mapboxMap.getSource('route')._data;
-                if (data && data.geometry) {
-                    coords = data.geometry.coordinates;
-                }
-            }
-
-            mapboxMap.setStyle(styleUrl);
-
-            // Re-add sources and layers once the style is loaded
-            mapboxMap.once('style.load', function() {
-                mapboxMap.addSource('route', {
-                    'type': 'geojson',
-                    'data': {
-                        'type': 'Feature',
-                        'properties': {},
-                        'geometry': {
-                            'type': 'LineString',
-                            'coordinates': coords
-                        }
-                    }
-                });
-
-                mapboxMap.addLayer({
-                    'id': 'route',
-                    'type': 'line',
-                    'source': 'route',
-                    'layout': {
-                        'line-join': 'round',
-                        'line-cap': 'round'
-                    },
-                    'paint': {
-                        'line-color': '#fc4c02', // Strava Orange!
-                        'line-width': 5
-                    }
-                });
-            });
-        } else if (leafletMap) {
+        if (leafletMap) {
             // Remove existing tile layers
             leafletMap.eachLayer(function(layer) {
                 if (layer instanceof L.TileLayer) {
@@ -188,25 +86,7 @@
     function updateCurrentLocation(lat, lon) {
         if (lat === 0.0 && lon === 0.0) return;
 
-        if (isMapboxEnabled && mapboxMap) {
-            mapboxMap.easeTo({ center: [lon, lat], zoom: 15 });
-            
-            // Create or update current location marker
-            if (!currentMarker) {
-                var el = document.createElement('div');
-                el.style.width = '12px';
-                el.style.height = '12px';
-                el.style.backgroundColor = '#FC4C02'; // Strava Orange
-                el.style.borderRadius = '50%';
-                el.style.border = '2px solid #ffffff';
-                el.style.boxShadow = '0 0 8px #FC4C02';
-                currentMarker = new mapboxgl.Marker(el)
-                    .setLngLat([lon, lat])
-                    .addTo(mapboxMap);
-            } else {
-                currentMarker.setLngLat([lon, lat]);
-            }
-        } else if (leafletMap) {
+        if (leafletMap) {
             leafletMap.setView([lat, lon], 15);
             
             if (!currentMarker) {
@@ -239,34 +119,9 @@
 
         if (normalizedPoints.length === 0) return;
 
-        // Default fitBounds to true if not specified
         var shouldFit = (fitBounds !== false && fitBounds !== 'false');
 
-        if (isMapboxEnabled && mapboxMap) {
-            var coords = normalizedPoints.map(function(p) { return [p[1], p[0]]; }); // Mapbox expects [lon, lat]
-            
-            if (mapboxMap.getSource('route')) {
-                mapboxMap.getSource('route').setData({
-                    'type': 'Feature',
-                    'properties': {},
-                    'geometry': {
-                        'type': 'LineString',
-                        'coordinates': coords
-                    }
-                });
-
-                // Adjust bounds only when requested
-                if (shouldFit && coords.length > 1) {
-                    var bounds = coords.reduce(function (acc, coord) {
-                        return acc.extend(coord);
-                    }, new mapboxgl.LngLatBounds(coords[0], coords[0]));
-                    mapboxMap.fitBounds(bounds, { padding: 40 });
-                }
-            }
-
-            // Draw start and end markers
-            drawStartEndMarkersMapbox(coords[0], coords[coords.length - 1]);
-        } else if (leafletMap) {
+        if (leafletMap) {
             if (routeLayer) {
                 leafletMap.removeLayer(routeLayer);
             }
@@ -279,27 +134,6 @@
 
             drawStartEndMarkersLeaflet(normalizedPoints[0], normalizedPoints[normalizedPoints.length - 1]);
         }
-    }
-
-    function drawStartEndMarkersMapbox(startCoords, endCoords) {
-        if (startMarker) startMarker.remove();
-        if (endMarker) endMarker.remove();
-
-        var startEl = document.createElement('div');
-        startEl.style.width = '10px';
-        startEl.style.height = '10px';
-        startEl.style.backgroundColor = '#2ecc71'; // Green
-        startEl.style.borderRadius = '50%';
-        startEl.style.border = '2px solid #ffffff';
-        startMarker = new mapboxgl.Marker(startEl).setLngLat(startCoords).addTo(mapboxMap);
-
-        var endEl = document.createElement('div');
-        endEl.style.width = '10px';
-        endEl.style.height = '10px';
-        endEl.style.backgroundColor = '#e74c3c'; // Red
-        endEl.style.borderRadius = '50%';
-        endEl.style.border = '2px solid #ffffff';
-        endMarker = new mapboxgl.Marker(endEl).setLngLat(endCoords).addTo(mapboxMap);
     }
 
     function drawStartEndMarkersLeaflet(startLatLng, endLatLng) {
@@ -322,21 +156,7 @@
     }
 
     function clearRoute() {
-        if (isMapboxEnabled && mapboxMap) {
-            if (mapboxMap.getSource('route')) {
-                mapboxMap.getSource('route').setData({
-                    'type': 'Feature',
-                    'properties': {},
-                    'geometry': { 'type': 'LineString', 'coordinates': [] }
-                });
-            }
-            if (startMarker) startMarker.remove();
-            if (endMarker) endMarker.remove();
-            if (currentMarker) currentMarker.remove();
-            startMarker = null;
-            endMarker = null;
-            currentMarker = null;
-        } else if (leafletMap) {
+        if (leafletMap) {
             if (routeLayer) leafletMap.removeLayer(routeLayer);
             if (startMarker) leafletMap.removeLayer(startMarker);
             if (endMarker) leafletMap.removeLayer(endMarker);
@@ -348,8 +168,6 @@
         }
     }
 
-    // Fix #21: Append only new points to the existing route instead of re-sending the full array.
-    // This is called during live tracking with only the delta since the last update.
     function appendRoute(newPointsJson, fitBounds) {
         var newPoints = JSON.parse(newPointsJson);
         if (!newPoints || newPoints.length === 0) return;
@@ -365,27 +183,12 @@
 
         if (normalized.length === 0) return;
 
-        if (isMapboxEnabled && mapboxMap) {
-            var src = mapboxMap.getSource('route');
-            if (!src) {
-                // Source not yet initialised: treat as a full setRoute
-                setRoute(newPointsJson, fitBounds);
-                return;
-            }
-            var existing = src._data && src._data.geometry ? src._data.geometry.coordinates : [];
-            var appended = existing.concat(normalized.map(function(p) { return [p[1], p[0]]; }));
-            src.setData({
-                'type': 'Feature',
-                'properties': {},
-                'geometry': { 'type': 'LineString', 'coordinates': appended }
-            });
-        } else if (leafletMap) {
+        if (leafletMap) {
             if (routeLayer) {
                 var latlngs = routeLayer.getLatLngs();
                 normalized.forEach(function(p) { latlngs.push(L.latLng(p[0], p[1])); });
                 routeLayer.setLatLngs(latlngs);
             } else {
-                // No existing polyline yet — create one
                 routeLayer = L.polyline(normalized, { color: '#FC4C02', weight: 5 }).addTo(leafletMap);
             }
         }

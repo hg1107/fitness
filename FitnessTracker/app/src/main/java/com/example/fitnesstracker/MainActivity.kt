@@ -11,14 +11,10 @@ import androidx.compose.ui.Modifier
 import com.example.fitnesstracker.service.WeeklySummaryWorker
 import com.example.fitnesstracker.service.WorkoutReminderWorker
 import com.example.fitnesstracker.theme.FitnessTrackerTheme
-import com.example.fitnesstracker.util.SecureStore
 
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-
-    // Initialize encrypted storage for API keys before any ViewModel reads it
-    SecureStore.init(applicationContext)
 
     // Schedule the daily workout reminder and weekly recap (no-ops if already scheduled)
     WorkoutReminderWorker.schedule(applicationContext)

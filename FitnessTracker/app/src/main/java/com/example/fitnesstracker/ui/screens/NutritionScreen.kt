@@ -56,7 +56,6 @@ fun NutritionScreen(
     viewModel: NutritionViewModel,
     activityViewModel: ActivityViewModel,
     onNavigateToSearch: (String) -> Unit,
-    onNavigateToCoach: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -289,69 +288,7 @@ fun NutritionScreen(
             Spacer(modifier = Modifier.height(10.dp))
         }
 
-        // AI Nutrition Coach Entry Banner Card
 
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onNavigateToCoach() },
-            colors = CardDefaults.cardColors(containerColor = CardGray),
-            border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.4f)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color(0xFF1B5E20).copy(alpha = 0.2f),
-                    modifier = Modifier.size(50.dp),
-                    border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.3f))
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text("🤖", fontSize = 24.sp)
-                    }
-                }
-                
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "AI Nutrition Coach",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF00E676)
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "Get meal plans, check substitutions, and ask nutrition questions personalized to your profile.",
-                        fontSize = 11.sp,
-                        color = LightGray,
-                        lineHeight = 15.sp
-                    )
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = White,
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    ) {
-                        Text(
-                            text = "Chat",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Black
-                        )
-                    }
-                }
-            }
-        }
 
         Spacer(modifier = Modifier.height(20.dp))
 

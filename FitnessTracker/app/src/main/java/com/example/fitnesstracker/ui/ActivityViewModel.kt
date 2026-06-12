@@ -163,8 +163,7 @@ class ActivityViewModel(
         age: Int,
         weightKg: Double,
         heightCm: Double,
-        preferredUnits: String,
-        mapboxToken: String
+        preferredUnits: String
     ) {
         viewModelScope.launch {
             val current = activityDao.getUserProfileSync() ?: UserProfile()
@@ -173,8 +172,7 @@ class ActivityViewModel(
                 age = if (age > 0) age else 30,
                 weightKg = if (weightKg > 0.0) weightKg else 70.0,
                 heightCm = if (heightCm > 0.0) heightCm else 175.0,
-                preferredUnits = preferredUnits.trim().ifEmpty { "Metric" },
-                mapboxToken = mapboxToken.trim()
+                preferredUnits = preferredUnits.trim().ifEmpty { "Metric" }
             )
             activityDao.insertUserProfile(updated)
         }

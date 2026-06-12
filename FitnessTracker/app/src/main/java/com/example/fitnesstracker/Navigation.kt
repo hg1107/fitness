@@ -41,7 +41,6 @@ import com.example.fitnesstracker.ui.screens.ActivityDetailScreen
 import com.example.fitnesstracker.ui.screens.OnboardingScreen
 import com.example.fitnesstracker.ui.screens.NutritionScreen
 import com.example.fitnesstracker.ui.screens.FoodSearchScreen
-import com.example.fitnesstracker.ui.screens.AICoachScreen
 import com.example.fitnesstracker.ui.screens.ProfileScreen
 
 
@@ -259,9 +258,6 @@ fun MainNavigation() {
                       onNavigateToSearch = { mealType ->
                           backStack.add(FoodSearch(mealType))
                       },
-                      onNavigateToCoach = {
-                          backStack.add(AICoach)
-                      },
                       modifier = Modifier.padding(padding)
                   )
               }
@@ -272,12 +268,7 @@ fun MainNavigation() {
                       onNavigateBack = { backStack.removeLastOrNull() }
                   )
               }
-              entry<AICoach> {
-                  AICoachScreen(
-                      viewModel = nutritionViewModel,
-                      onNavigateBack = { backStack.removeLastOrNull() }
-                  )
-              }
+
               entry<Profile> {
                   ProfileScreen(
                       viewModel = nutritionViewModel,

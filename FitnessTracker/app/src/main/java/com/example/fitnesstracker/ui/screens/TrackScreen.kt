@@ -503,7 +503,6 @@ fun TrackScreen(
                         .background(Color.DarkGray)
                 ) {
                     ActivityMapView(
-                        mapboxToken = userProfile.mapboxToken,
                         routePoints = trackingState.routePoints,
                         currentLocation = trackingState.routePoints.lastOrNull(),
                         isDarkMode = isDarkMode,
@@ -609,7 +608,6 @@ fun TrackScreen(
             }
         ) }
         var unitInput by remember { mutableStateOf(userProfile.preferredUnits) }
-        var tokenInput by remember { mutableStateOf(userProfile.mapboxToken) }
 
         Dialog(onDismissRequest = { showSettingsDialog = false }) {
             // Fix #11: Constrain dialog height so keyboard doesn't push content off screen
@@ -750,19 +748,7 @@ fun TrackScreen(
                         )
                     }
 
-                    OutlinedTextField(
-                        value = tokenInput,
-                        onValueChange = { tokenInput = it },
-                        label = { Text("Mapbox Access Token", color = MutedText) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = BrightText,
-                            unfocusedTextColor = BrightText,
-                            focusedBorderColor = StravaOrange,
-                            unfocusedBorderColor = OutlinedBorder
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+
 
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -783,8 +769,7 @@ fun TrackScreen(
                                     age = ageInput.toIntOrNull() ?: 30,
                                     weightKg = savedWeight,
                                     heightCm = savedHeight,
-                                    preferredUnits = unitInput,
-                                    mapboxToken = tokenInput
+                                    preferredUnits = unitInput
                                 )
                                 showSettingsDialog = false
                             },
@@ -835,7 +820,6 @@ fun TrackScreen(
 
 @Composable
 fun ActivityMapView(
-    mapboxToken: String,
     routePoints: List<LocationPoint>,
     currentLocation: LocationPoint?,
     isDarkMode: Boolean,
@@ -905,9 +889,7 @@ fun ActivityMapView(
                         val themeStr = if (isDarkMode) "dark" else "light"
                         evaluateJavascript("currentTheme = '$themeStr'", null)
                         
-                        // Fix #18: Use JSONObject.quote() to safely encode token in JS call
-                        val safeToken = org.json.JSONObject.quote(mapboxToken)
-                        evaluateJavascript("initMap($safeToken, $startLat, $startLon)", null)
+                        evaluateJavascript("initMap($startLat, $startLon)", null)
                         
                         if (routePoints.isNotEmpty()) {
                             evaluateJavascript("setRoute('$fullPointsJson', $fitRouteBounds)", null)

@@ -156,7 +156,6 @@ fun ActivityDetailScreen(
             ) {
                 if (mapPoints.isNotEmpty()) {
                     ActivityMapView(
-                        mapboxToken = userProfile.mapboxToken,
                         routePoints = mapPoints,
                         currentLocation = null,
                         isDarkMode = isDarkMode,
