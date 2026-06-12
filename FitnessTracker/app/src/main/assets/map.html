@@ -6,29 +6,58 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     
     <!-- Leaflet CSS/JS (OpenStreetMap) -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+    <link rel="stylesheet" href="leaflet.css" />
+    <script src="leaflet.js"></script>
 
     <style>
-        body { margin: 0; padding: 0; background-color: #121212; color: #ffffff; }
-        #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100%; }
-        .leaflet-container { background: #121212; }
+        html, body {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+        }
+        
+        /* Dark Theme (default) */
+        body.dark { background-color: #121212; color: #ffffff; }
+        body.dark .leaflet-container { background: #121212; }
+        body.dark .leaflet-bar a { background-color: #1C1C1E !important; color: #ffffff !important; border-bottom: 1.5px solid #2C2C2E !important; }
+        body.dark .leaflet-bar a:hover { background-color: #2C2C2E !important; }
+
+        /* Light Theme */
+        body.light { background-color: #ffffff; color: #121212; }
+        body.light .leaflet-container { background: #f4f4f5; }
+        body.light .leaflet-bar a { background-color: #ffffff !important; color: #121212 !important; border-bottom: 1.5px solid #e4e4e7 !important; }
+        body.light .leaflet-bar a:hover { background-color: #f4f4f5 !important; }
+
         .leaflet-bar { border: none !important; }
-        .leaflet-bar a { background-color: #1C1C1E !important; color: #ffffff !important; border-bottom: 1.5px solid #2C2C2E !important; }
-        .leaflet-bar a:hover { background-color: #2C2C2E !important; }
     </style>
 </head>
-<body>
+<body class="dark">
 <div id="map"></div>
 <script>
     var leafletMap = null;
+    var tileLayer = null;
     var routeLayer = null;
     var startMarker = null;
     var endMarker = null;
     var currentMarker = null;
     var currentTheme = 'dark';
 
-    function initMap(initialLat, initialLon) {
+    function initMap(initialLat, initialLon, theme) {
+        if (theme) {
+            currentTheme = theme;
+        }
+        document.body.className = currentTheme;
         console.log("initMap called with lat: " + initialLat + ", lon: " + initialLon + ", theme: " + currentTheme);
         var lat = initialLat || 0.0;
         var lon = initialLon || 0.0;
@@ -38,6 +67,7 @@
         if (leafletMap) {
             leafletMap.remove();
             leafletMap = null;
+            tileLayer = null;
         }
         document.getElementById('map').innerHTML = "";
 
@@ -48,38 +78,46 @@
             ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
             : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 
-        L.tileLayer(tileUrl, {
+        tileLayer = L.tileLayer(tileUrl, {
             attribution: '&copy; OpenStreetMap &copy; CartoDB',
             subdomains: 'abcd',
             maxZoom: 20
         }).addTo(leafletMap);
         
         L.control.zoom({ position: 'bottomright' }).addTo(leafletMap);
+
+        // Force a layout recalculation in Leaflet after a short delay to ensure correct rendering bounds
+        setTimeout(function() {
+            if (leafletMap) {
+                leafletMap.invalidateSize();
+            }
+        }, 150);
+        console.log("initMap completed successfully! leafletMap is: " + (leafletMap ? "defined" : "null"));
     }
 
     function setMapTheme(theme) {
         if (currentTheme === theme) return;
         currentTheme = theme;
+        document.body.className = currentTheme;
         var isDark = (theme === 'dark');
         console.log("setMapTheme called: " + theme);
 
         if (leafletMap) {
-            // Remove existing tile layers
-            leafletMap.eachLayer(function(layer) {
-                if (layer instanceof L.TileLayer) {
-                    leafletMap.removeLayer(layer);
-                }
-            });
+            if (tileLayer) {
+                leafletMap.removeLayer(tileLayer);
+            }
 
             var tileUrl = isDark 
                 ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' 
                 : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
 
-            L.tileLayer(tileUrl, {
+            tileLayer = L.tileLayer(tileUrl, {
                 attribution: '&copy; OpenStreetMap &copy; CartoDB',
                 subdomains: 'abcd',
                 maxZoom: 20
             }).addTo(leafletMap);
+
+            leafletMap.invalidateSize();
         }
     }
 
@@ -133,6 +171,7 @@
             }
 
             drawStartEndMarkersLeaflet(normalizedPoints[0], normalizedPoints[normalizedPoints.length - 1]);
+            leafletMap.invalidateSize();
         }
     }
 

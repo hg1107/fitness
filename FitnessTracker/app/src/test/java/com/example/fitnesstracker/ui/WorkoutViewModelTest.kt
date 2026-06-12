@@ -113,7 +113,7 @@ class WorkoutViewModelTest {
     }
 
     @Test
-    fun testDeleteSessionDeletesPlannedExercise() = runTest {
+    fun testDeleteSessionDoesNotDeletePlannedExercise() = runTest {
         // Given a planned exercise for Wednesday (day 3)
         viewModel.selectDay(3)
         viewModel.addPlannedExercise("Squats", "Legs")
@@ -139,9 +139,9 @@ class WorkoutViewModelTest {
         // When we delete this session
         viewModel.deleteSession(sessionWithSets)
         
-        // Then the planned exercise should also be deleted
+        // Then the planned exercise should still exist
         val plannedAfter = viewModel.plannedExercises.first()
-        assertEquals(0, plannedAfter.size)
+        assertEquals(1, plannedAfter.size)
     }
 }
 
@@ -163,8 +163,16 @@ class FakeWorkoutDao : WorkoutDao {
         plannedExercises.removeIf { it.id == plannedExercise.id }
     }
 
-    override suspend fun deletePlannedExerciseByNameAndDay(name: String, day: Int) {
-        plannedExercises.removeIf { it.exerciseName == name && it.dayOfWeek == day }
+    override suspend fun deletePlannedExercisesByName(name: String) {
+        plannedExercises.removeIf { it.exerciseName == name }
+    }
+
+    override fun getLoggedExerciseNamesSince(since: Long): Flow<List<String>> = flow {
+        emit(sessions.filter { it.session.timestamp >= since }.map { it.session.exerciseName }.distinct())
+    }
+
+    override fun getAllSessionsSince(since: Long): Flow<List<WorkoutSession>> = flow {
+        emit(sessions.filter { it.session.timestamp >= since }.map { it.session })
     }
 
     override suspend fun insertWorkoutSession(session: WorkoutSession): Long {

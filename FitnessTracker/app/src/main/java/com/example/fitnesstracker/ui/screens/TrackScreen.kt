@@ -875,8 +875,23 @@ fun ActivityMapView(
                 settings.domStorageEnabled = true
                 settings.allowFileAccess = true           // needed for android_asset/
                 @Suppress("DEPRECATION")
-                settings.allowFileAccessFromFileURLs = false // prevents JS from reading other file://
+                settings.allowFileAccessFromFileURLs = true // allows JS to load local files
+                @Suppress("DEPRECATION")
+                settings.allowUniversalAccessFromFileURLs = true // allows loading network tiles from file:// origin
                 
+                // Allow loading tiles over HTTPS from local file:// origin
+                settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                
+                // Set standard browser User-Agent to prevent tile CDNs from blocking WebView
+                settings.userAgentString = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+
+                webChromeClient = object : android.webkit.WebChromeClient() {
+                    override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
+                        android.util.Log.d("MapWebView", "${consoleMessage?.message()} -- From line ${consoleMessage?.lineNumber()} of ${consoleMessage?.sourceId()}")
+                        return true
+                    }
+                }
+
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
@@ -884,17 +899,32 @@ fun ActivityMapView(
                         
                         val startLat = currentLocation?.latitude ?: 0.0
                         val startLon = currentLocation?.longitude ?: 0.0
-                        
-                        // Set standard theme variable first
                         val themeStr = if (isDarkMode) "dark" else "light"
-                        evaluateJavascript("currentTheme = '$themeStr'", null)
                         
-                        evaluateJavascript("initMap($startLat, $startLon)", null)
+                        evaluateJavascript("initMap($startLat, $startLon, '$themeStr')", null)
                         
                         if (routePoints.isNotEmpty()) {
                             evaluateJavascript("setRoute('$fullPointsJson', $fitRouteBounds)", null)
                             lastSentPointCount = routePoints.size
                         }
+                    }
+
+                    override fun onReceivedError(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?,
+                        error: android.webkit.WebResourceError?
+                    ) {
+                        super.onReceivedError(view, request, error)
+                        android.util.Log.e("MapWebView", "Network Error: ${error?.description} for URL: ${request?.url}")
+                    }
+
+                    override fun onReceivedHttpError(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?,
+                        errorResponse: android.webkit.WebResourceResponse?
+                    ) {
+                        super.onReceivedHttpError(view, request, errorResponse)
+                        android.util.Log.e("MapWebView", "HTTP Error: ${errorResponse?.statusCode} ${errorResponse?.reasonPhrase} for URL: ${request?.url}")
                     }
                 }
                 loadUrl("file:///android_asset/map.html")
