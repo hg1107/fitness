@@ -40,7 +40,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ProfileScreen(
     viewModel: NutritionViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val userProfileState by viewModel.userProfile.collectAsState(initial = null)
     val profile = userProfileState ?: return
@@ -65,6 +66,7 @@ fun ProfileScreen(
     val scrollState = rememberScrollState()
 
     Scaffold(
+        modifier = modifier,
         topBar = {
             TopAppBar(
                 title = {

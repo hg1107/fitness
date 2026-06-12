@@ -19,10 +19,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
+import java.text.SimpleDateFormat
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +42,7 @@ import androidx.core.content.ContextCompat
 import com.example.fitnesstracker.service.LocationPoint
 import com.example.fitnesstracker.service.TrackingState
 import com.example.fitnesstracker.ui.ActivityViewModel
+import com.example.fitnesstracker.data.ActivityRecord
 import java.util.Locale
 
 // Brand Colors
@@ -63,6 +66,7 @@ fun TrackScreen(
     var showSettingsDialog by remember { mutableStateOf(false) }
     var selectedActivityType by remember { mutableStateOf("Running") }
     var showCancelConfirmDialog by remember { mutableStateOf(false) }
+    var isDarkMode by remember { mutableStateOf(true) }
 
     // Launcher for location and notification permissions
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -102,13 +106,17 @@ fun TrackScreen(
             .background(DarkBackground)
     ) {
         if (!trackingState.isTracking) {
+            val allActivities by viewModel.allActivities.collectAsState(initial = emptyList())
+            var activityToDelete by remember { mutableStateOf<ActivityRecord?>(null) }
+
             // Pre-Activity Dashboard Layout
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
                     .padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
+                verticalArrangement = Arrangement.Top
             ) {
                 // Header
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -125,6 +133,8 @@ fun TrackScreen(
                         color = MutedText
                     )
                 }
+
+                Spacer(modifier = Modifier.height(24.dp))
 
                 // Activity Type selector
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -166,6 +176,8 @@ fun TrackScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(24.dp))
+
                 // Profile Configuration cards
                 Column(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -197,6 +209,8 @@ fun TrackScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(32.dp))
+
                 // Big Start Button
                 Button(
                     onClick = { startTrackingClick() },
@@ -214,8 +228,134 @@ fun TrackScreen(
                         letterSpacing = 1.sp
                     )
                 }
-                
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                // Recent Activities section
+                if (allActivities.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Text(
+                            text = "Recent Sessions",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BrightText,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
+
+                        allActivities.take(3).forEach { activity ->
+                            val isImperial = userProfile.preferredUnits == "Imperial"
+                            val date = java.util.Date(activity.startTime)
+                            val dateFormatter = SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault())
+                            val dateString = dateFormatter.format(date)
+                            val durationString = formatDuration(activity.durationSeconds)
+                            val distanceKm = activity.distanceMeters / 1000.0
+                            val displayDistance = if (isImperial) activity.distanceMeters * 0.000621371 else distanceKm
+                            val distanceUnit = if (isImperial) "mi" else "km"
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(SurfaceCard)
+                                    .border(1.dp, OutlinedBorder, RoundedCornerShape(12.dp))
+                                    .clickable { 
+                                        onActivitySaved(activity.id)
+                                    }
+                                    .padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = activity.activityType,
+                                        color = StravaOrange,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = dateString,
+                                        color = MutedText,
+                                        fontSize = 12.sp
+                                    )
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = String.format(java.util.Locale.US, "%.2f %s", displayDistance, distanceUnit),
+                                            color = BrightText,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = durationString,
+                                            color = MutedText,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = { activityToDelete = activity },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Delete Log",
+                                            tint = Color(0xFFEF5350),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Delete confirmation dialog
+            activityToDelete?.let { activity ->
+                Dialog(onDismissRequest = { activityToDelete = null }) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = SurfaceCard,
+                        border = BorderStroke(1.dp, OutlinedBorder),
+                        modifier = Modifier.fillMaxWidth().padding(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp)) {
+                            Text("Delete Activity?", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = BrightText)
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text("Delete this ${activity.activityType} on ${
+                                SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(java.util.Date(activity.startTime))
+                            }? This cannot be undone.", fontSize = 14.sp, color = MutedText)
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = { activityToDelete = null }) {
+                                    Text("Cancel", color = BrightText)
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        viewModel.deleteActivity(activity)
+                                        activityToDelete = null
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE74C3C), contentColor = BrightText)
+                                ) {
+                                    Text("Delete", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         } else {
             // Live Tracking Dashboard Layout
@@ -364,8 +504,27 @@ fun TrackScreen(
                         mapboxToken = userProfile.mapboxToken,
                         routePoints = trackingState.routePoints,
                         currentLocation = trackingState.routePoints.lastOrNull(),
+                        isDarkMode = isDarkMode,
+                        fitRouteBounds = false,
                         modifier = Modifier.fillMaxSize()
                     )
+
+                    // Map theme toggle button
+                    FloatingActionButton(
+                        onClick = { isDarkMode = !isDarkMode },
+                        containerColor = SurfaceCard,
+                        contentColor = BrightText,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp)
+                            .size(44.dp),
+                        shape = CircleShape
+                    ) {
+                        Text(
+                            text = if (isDarkMode) "☀️" else "🌙",
+                            fontSize = 18.sp
+                        )
+                    }
                 }
 
                 // Live Tracking Control Dashboard
@@ -673,6 +832,8 @@ fun ActivityMapView(
     mapboxToken: String,
     routePoints: List<LocationPoint>,
     currentLocation: LocationPoint?,
+    isDarkMode: Boolean,
+    fitRouteBounds: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -691,6 +852,13 @@ fun ActivityMapView(
         sb.toString()
     }
 
+    LaunchedEffect(isDarkMode, isMapInitialized) {
+        if (isMapInitialized) {
+            val themeStr = if (isDarkMode) "dark" else "light"
+            webViewRef?.evaluateJavascript("setMapTheme('$themeStr')", null)
+        }
+    }
+
     AndroidView(
         factory = { ctx ->
             WebView(ctx).apply {
@@ -706,10 +874,15 @@ fun ActivityMapView(
                         
                         val startLat = currentLocation?.latitude ?: 0.0
                         val startLon = currentLocation?.longitude ?: 0.0
+                        
+                        // Set standard theme variable first
+                        val themeStr = if (isDarkMode) "dark" else "light"
+                        evaluateJavascript("currentTheme = '$themeStr'", null)
+                        
                         evaluateJavascript("initMap('$mapboxToken', $startLat, $startLon)", null)
                         
                         if (routePoints.isNotEmpty()) {
-                            evaluateJavascript("setRoute('$pointsJson')", null)
+                            evaluateJavascript("setRoute('$pointsJson', $fitRouteBounds)", null)
                         }
                     }
                 }
@@ -722,7 +895,7 @@ fun ActivityMapView(
                     webView.evaluateJavascript("updateCurrentLocation(${currentLocation.latitude}, ${currentLocation.longitude})", null)
                 }
                 if (routePoints.isNotEmpty()) {
-                    webView.evaluateJavascript("setRoute('$pointsJson')", null)
+                    webView.evaluateJavascript("setRoute('$pointsJson', $fitRouteBounds)", null)
                 } else {
                     webView.evaluateJavascript("clearRoute()", null)
                 }

@@ -281,7 +281,8 @@ fun MainNavigation() {
               entry<Profile> {
                   ProfileScreen(
                       viewModel = nutritionViewModel,
-                      onNavigateBack = { backStack.removeLastOrNull() }
+                      onNavigateBack = { backStack.removeLastOrNull() },
+                      modifier = Modifier.padding(padding)
                   )
               }
           }

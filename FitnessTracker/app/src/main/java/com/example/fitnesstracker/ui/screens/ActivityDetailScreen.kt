@@ -41,6 +41,7 @@ fun ActivityDetailScreen(
     var points by remember { mutableStateOf<List<ActivityPoint>>(emptyList()) }
     val userProfile by viewModel.userProfile.collectAsState()
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var isDarkMode by remember { mutableStateOf(true) }
 
     LaunchedEffect(activityId) {
         activity = viewModel.getActivityById(activityId)
@@ -154,8 +155,26 @@ fun ActivityDetailScreen(
                         mapboxToken = userProfile.mapboxToken,
                         routePoints = mapPoints,
                         currentLocation = null,
+                        isDarkMode = isDarkMode,
+                        fitRouteBounds = true,
                         modifier = Modifier.fillMaxSize()
                     )
+
+                    // Map theme toggle button
+                    IconButton(
+                        onClick = { isDarkMode = !isDarkMode },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp)
+                            .size(36.dp)
+                            .background(SurfaceCard, RoundedCornerShape(50.dp))
+                            .border(1.dp, OutlinedBorder, RoundedCornerShape(50.dp))
+                    ) {
+                        Text(
+                            text = if (isDarkMode) "☀️" else "🌙",
+                            fontSize = 14.sp
+                        )
+                    }
                 } else {
                     Box(
                         modifier = Modifier.fillMaxSize(),

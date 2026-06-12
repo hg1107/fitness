@@ -240,7 +240,8 @@ class NutritionViewModel(
         dietaryPreference: String,
         foodLikes: String,
         foodDislikes: String,
-        foodAllergies: String
+        foodAllergies: String,
+        preferredUnits: String = "Metric"
     ) {
         viewModelScope.launch {
             val profile = UserProfile(
@@ -254,6 +255,7 @@ class NutritionViewModel(
                 activityLevel = activityLevel,
                 dietaryPreference = dietaryPreference,
                 onboardingComplete = true,
+                preferredUnits = preferredUnits,
                 foodLikes = foodLikes,
                 foodDislikes = foodDislikes,
                 foodAllergies = foodAllergies

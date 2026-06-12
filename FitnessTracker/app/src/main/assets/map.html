@@ -33,9 +33,10 @@
     var endMarker = null;
     var currentMarker = null;
     var isMapboxEnabled = false;
+    var currentTheme = 'dark';
 
     function initMap(mapboxToken, initialLat, initialLon) {
-        console.log("initMap called with token: " + mapboxToken + ", lat: " + initialLat + ", lon: " + initialLon);
+        console.log("initMap called with token: " + mapboxToken + ", lat: " + initialLat + ", lon: " + initialLon + ", theme: " + currentTheme);
         var lat = initialLat || 0.0;
         var lon = initialLon || 0.0;
         var zoom = (lat === 0.0 && lon === 0.0) ? 2 : 15;
@@ -55,9 +56,10 @@
         if (mapboxToken && mapboxToken.trim() !== "" && mapboxToken.indexOf("YOUR_") !== 0) {
             try {
                 mapboxgl.accessToken = mapboxToken;
+                var styleUrl = (currentTheme === 'light') ? 'mapbox://styles/mapbox/light-v11' : 'mapbox://styles/mapbox/dark-v11';
                 mapboxMap = new mapboxgl.Map({
                     container: 'map',
-                    style: 'mapbox://styles/mapbox/dark-v11',
+                    style: styleUrl,
                     center: [lon, lat],
                     zoom: zoom
                 });
@@ -101,14 +103,86 @@
         isMapboxEnabled = false;
         leafletMap = L.map('map', { zoomControl: false }).setView([lat, lon], zoom);
         
-        // Use a nice dark tile style from CartoDB Dark Matter
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        // Use a nice theme tile style
+        var tileUrl = (currentTheme === 'light')
+            ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
+            : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+
+        L.tileLayer(tileUrl, {
             attribution: '&copy; OpenStreetMap &copy; CartoDB',
             subdomains: 'abcd',
             maxZoom: 20
         }).addTo(leafletMap);
         
         L.control.zoom({ position: 'bottomright' }).addTo(leafletMap);
+    }
+
+    function setMapTheme(theme) {
+        if (currentTheme === theme) return;
+        currentTheme = theme;
+        var isDark = (theme === 'dark');
+        console.log("setMapTheme called: " + theme);
+
+        if (isMapboxEnabled && mapboxMap) {
+            var styleUrl = isDark ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11';
+            
+            // Retrieve existing coordinates if path exists
+            var coords = [];
+            if (mapboxMap.getSource('route')) {
+                var data = mapboxMap.getSource('route')._data;
+                if (data && data.geometry) {
+                    coords = data.geometry.coordinates;
+                }
+            }
+
+            mapboxMap.setStyle(styleUrl);
+
+            // Re-add sources and layers once the style is loaded
+            mapboxMap.once('style.load', function() {
+                mapboxMap.addSource('route', {
+                    'type': 'geojson',
+                    'data': {
+                        'type': 'Feature',
+                        'properties': {},
+                        'geometry': {
+                            'type': 'LineString',
+                            'coordinates': coords
+                        }
+                    }
+                });
+
+                mapboxMap.addLayer({
+                    'id': 'route',
+                    'type': 'line',
+                    'source': 'route',
+                    'layout': {
+                        'line-join': 'round',
+                        'line-cap': 'round'
+                    },
+                    'paint': {
+                        'line-color': '#fc4c02', // Strava Orange!
+                        'line-width': 5
+                    }
+                });
+            });
+        } else if (leafletMap) {
+            // Remove existing tile layers
+            leafletMap.eachLayer(function(layer) {
+                if (layer instanceof L.TileLayer) {
+                    leafletMap.removeLayer(layer);
+                }
+            });
+
+            var tileUrl = isDark 
+                ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' 
+                : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+
+            L.tileLayer(tileUrl, {
+                attribution: '&copy; OpenStreetMap &copy; CartoDB',
+                subdomains: 'abcd',
+                maxZoom: 20
+            }).addTo(leafletMap);
+        }
     }
 
     function updateCurrentLocation(lat, lon) {
@@ -148,8 +222,8 @@
         }
     }
 
-    function setRoute(pointsJson) {
-        console.log("setRoute called with: " + pointsJson);
+    function setRoute(pointsJson, fitBounds) {
+        console.log("setRoute called with: " + pointsJson + ", fitBounds: " + fitBounds);
         var points = JSON.parse(pointsJson); // Array of {latitude, longitude} or [lat, lon]
         if (!points || points.length === 0) return;
 
@@ -165,6 +239,9 @@
 
         if (normalizedPoints.length === 0) return;
 
+        // Default fitBounds to true if not specified
+        var shouldFit = (fitBounds !== false && fitBounds !== 'false');
+
         if (isMapboxEnabled && mapboxMap) {
             var coords = normalizedPoints.map(function(p) { return [p[1], p[0]]; }); // Mapbox expects [lon, lat]
             
@@ -178,8 +255,8 @@
                     }
                 });
 
-                // Adjust bounds
-                if (coords.length > 1) {
+                // Adjust bounds only when requested
+                if (shouldFit && coords.length > 1) {
                     var bounds = coords.reduce(function (acc, coord) {
                         return acc.extend(coord);
                     }, new mapboxgl.LngLatBounds(coords[0], coords[0]));
@@ -196,7 +273,7 @@
             
             routeLayer = L.polyline(normalizedPoints, { color: '#FC4C02', weight: 5 }).addTo(leafletMap);
             
-            if (normalizedPoints.length > 1) {
+            if (shouldFit && normalizedPoints.length > 1) {
                 leafletMap.fitBounds(routeLayer.getBounds(), { padding: [20, 20] });
             }
 
