@@ -117,7 +117,11 @@ class NutritionViewModel(
             weightKg = profile.weightKg,
             heightCm = profile.heightCm,
             activityLevel = profile.activityLevel,
-            fitnessGoal = profile.fitnessGoal
+            fitnessGoal = profile.fitnessGoal,
+            customCalories = profile.customCalories,
+            customProtein = profile.customProtein,
+            customCarbs = profile.customCarbs,
+            customFat = profile.customFat
         )
 
         val consumedCalories = logs.sumOf { it.calories * it.quantity }
@@ -330,7 +334,11 @@ class NutritionViewModel(
         foodLikes: String,
         foodDislikes: String,
         foodAllergies: String,
-        waterTargetMl: Int
+        waterTargetMl: Int,
+        customCalories: Double? = null,
+        customProtein: Double? = null,
+        customCarbs: Double? = null,
+        customFat: Double? = null
     ) {
         viewModelScope.launch {
             val current = activityDao.getUserProfileSync() ?: UserProfile()
@@ -348,7 +356,11 @@ class NutritionViewModel(
                     foodLikes = foodLikes,
                     foodDislikes = foodDislikes,
                     foodAllergies = foodAllergies,
-                    waterTargetMl = waterTargetMl
+                    waterTargetMl = waterTargetMl,
+                    customCalories = customCalories,
+                    customProtein = customProtein,
+                    customCarbs = customCarbs,
+                    customFat = customFat
                 )
             )
         }
@@ -551,7 +563,11 @@ class NutritionViewModel(
         weightKg: Double,
         heightCm: Double,
         activityLevel: String,
-        fitnessGoal: String
+        fitnessGoal: String,
+        customCalories: Double? = null,
+        customProtein: Double? = null,
+        customCarbs: Double? = null,
+        customFat: Double? = null
     ): NutritionGoal {
         val bmr = if (gender.equals("Male", ignoreCase = true)) {
             10 * weightKg + 6.25 * heightCm - 5 * age + 5
@@ -583,10 +599,10 @@ class NutritionViewModel(
         val carbs = (calories - (protein * 4) - (fat * 9)) / 4.0
 
         return NutritionGoal(
-            calories = calories.coerceAtLeast(1200.0),
-            protein = protein.coerceAtLeast(40.0),
-            carbs = carbs.coerceAtLeast(50.0),
-            fat = fat.coerceAtLeast(30.0)
+            calories = customCalories ?: calories.coerceAtLeast(1200.0),
+            protein = customProtein ?: protein.coerceAtLeast(40.0),
+            carbs = customCarbs ?: carbs.coerceAtLeast(50.0),
+            fat = customFat ?: fat.coerceAtLeast(30.0)
         )
     }
 

@@ -183,7 +183,11 @@ data class UserProfile(
     val mealTimings: String = "Breakfast: 8 AM, Lunch: 1:30 PM, Dinner: 8:30 PM",
     val gymSchedule: String = "Mon, Wed, Fri",
     val availableFoodsAtHome: String = "eggs, milk, paneer, oats, banana, rice, roti",
-    val waterTargetMl: Int = 3000
+    val waterTargetMl: Int = 3000,
+    val customCalories: Double? = null,
+    val customProtein: Double? = null,
+    val customCarbs: Double? = null,
+    val customFat: Double? = null
 )
 
 @Entity(tableName = "food_items")
@@ -420,6 +424,16 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
     }
 }
 
+// Migration from v7 to v8: adds custom nutrition targets to user_profile
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE user_profile ADD COLUMN customCalories REAL")
+        db.execSQL("ALTER TABLE user_profile ADD COLUMN customProtein REAL")
+        db.execSQL("ALTER TABLE user_profile ADD COLUMN customCarbs REAL")
+        db.execSQL("ALTER TABLE user_profile ADD COLUMN customFat REAL")
+    }
+}
+
 @Database(
     entities = [
         PlannedExercise::class,
@@ -434,7 +448,7 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
         WeightLog::class,
         WaterLog::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class WorkoutDatabase : RoomDatabase() {
@@ -456,7 +470,7 @@ abstract class WorkoutDatabase : RoomDatabase() {
                 // Fix #26: versions 1-4 have no explicit migrations; users on those
                 // versions get a destructive reset. Version 5→6 is safe (addColumn only).
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
-                .addMigrations(MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                 .build()
                 INSTANCE = instance
                 instance

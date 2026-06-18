@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.google.android.gms.location.LocationServices
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -69,6 +70,79 @@ fun TrackScreen(
     var selectedActivityType by remember { mutableStateOf("Running") }
     var showCancelConfirmDialog by remember { mutableStateOf(false) }
     var isDarkMode by remember { mutableStateOf(true) }
+
+    var preTrackingLocation by remember { mutableStateOf<LocationPoint?>(null) }
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+
+    fun requestSingleLocationUpdate() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        ) {
+            try {
+                val locationRequest = com.google.android.gms.location.LocationRequest.Builder(
+                    com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
+                    1000L
+                ).setMaxUpdates(1).build()
+                
+                fusedLocationClient.requestLocationUpdates(
+                    locationRequest,
+                    object : com.google.android.gms.location.LocationCallback() {
+                        override fun onLocationResult(result: com.google.android.gms.location.LocationResult) {
+                            result.lastLocation?.let { loc ->
+                                preTrackingLocation = LocationPoint(loc.latitude, loc.longitude, System.currentTimeMillis())
+                            }
+                        }
+                    },
+                    android.os.Looper.getMainLooper()
+                )
+            } catch (e: SecurityException) {
+                // Ignore
+            }
+        }
+    }
+
+    val mapPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+        val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
+        if (fineGranted || coarseGranted) {
+            try {
+                fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
+                    if (loc != null) {
+                        preTrackingLocation = LocationPoint(loc.latitude, loc.longitude, System.currentTimeMillis())
+                    } else {
+                        requestSingleLocationUpdate()
+                    }
+                }.addOnFailureListener {
+                    requestSingleLocationUpdate()
+                }
+            } catch (e: SecurityException) {
+                // Ignore
+            }
+        }
+    }
+
+    val hasFineLocation = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    val hasCoarseLocation = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    LaunchedEffect(hasFineLocation, hasCoarseLocation) {
+        if (hasFineLocation || hasCoarseLocation) {
+            try {
+                fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
+                    if (loc != null) {
+                        preTrackingLocation = LocationPoint(loc.latitude, loc.longitude, System.currentTimeMillis())
+                    } else {
+                        requestSingleLocationUpdate()
+                    }
+                }.addOnFailureListener {
+                    requestSingleLocationUpdate()
+                }
+            } catch (e: SecurityException) {
+                // Ignore
+            }
+        }
+    }
 
     // Launcher for location and notification permissions
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -172,6 +246,95 @@ fun TrackScreen(
                                     color = if (isSelected) DarkBackground else BrightText,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // GPS Map View
+                Text(
+                    text = "GPS Map",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = BrightText,
+                    modifier = Modifier.align(Alignment.Start).padding(start = 4.dp, bottom = 8.dp)
+                )
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(260.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(1.dp, OutlinedBorder, RoundedCornerShape(16.dp)),
+                    colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        if (hasFineLocation || hasCoarseLocation) {
+                            ActivityMapView(
+                                routePoints = emptyList(),
+                                currentLocation = preTrackingLocation,
+                                isDarkMode = isDarkMode,
+                                fitRouteBounds = false,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            
+                            // Re-center button on top right of the map
+                            FloatingActionButton(
+                                onClick = { requestSingleLocationUpdate() },
+                                containerColor = SurfaceCard,
+                                contentColor = BrightText,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(12.dp)
+                                    .size(38.dp),
+                                shape = CircleShape
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Refresh Location",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        } else {
+                            // Request permission overlay
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(DarkBackground.copy(alpha = 0.6f))
+                                    .clickable {
+                                        mapPermissionLauncher.launch(
+                                            arrayOf(
+                                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                                Manifest.permission.ACCESS_COARSE_LOCATION
+                                            )
+                                        )
+                                    }
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = "Location Needed",
+                                    tint = StravaOrange,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Location Permission Needed",
+                                    color = BrightText,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Tap here to allow location access and display your location on the map.",
+                                    color = MutedText,
+                                    fontSize = 11.sp,
+                                    textAlign = TextAlign.Center
                                 )
                             }
                         }

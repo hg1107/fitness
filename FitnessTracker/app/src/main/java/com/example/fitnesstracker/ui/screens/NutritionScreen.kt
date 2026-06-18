@@ -77,7 +77,11 @@ fun NutritionScreen(
         weightKg = profile.weightKg,
         heightCm = profile.heightCm,
         activityLevel = profile.activityLevel,
-        fitnessGoal = profile.fitnessGoal
+        fitnessGoal = profile.fitnessGoal,
+        customCalories = profile.customCalories,
+        customProtein = profile.customProtein,
+        customCarbs = profile.customCarbs,
+        customFat = profile.customFat
     )
 
     // Logged totals

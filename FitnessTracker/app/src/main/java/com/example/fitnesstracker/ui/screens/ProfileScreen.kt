@@ -78,6 +78,11 @@ fun ProfileScreen(
     var foodDislikes by remember(profile.id) { mutableStateOf(profile.foodDislikes) }
     var foodAllergies by remember(profile.id) { mutableStateOf(profile.foodAllergies) }
     var waterTargetMl by remember(profile.id) { mutableStateOf(profile.waterTargetMl.toString()) }
+    var isCustomGoalsEnabled by remember(profile.id) { mutableStateOf(profile.customCalories != null) }
+    var customCalories by remember(profile.id) { mutableStateOf(profile.customCalories?.toInt()?.toString() ?: "") }
+    var customProtein by remember(profile.id) { mutableStateOf(profile.customProtein?.toInt()?.toString() ?: "") }
+    var customCarbs by remember(profile.id) { mutableStateOf(profile.customCarbs?.toInt()?.toString() ?: "") }
+    var customFat by remember(profile.id) { mutableStateOf(profile.customFat?.toInt()?.toString() ?: "") }
 
     var saveSuccess by remember { mutableStateOf(false) }
 
@@ -122,7 +127,11 @@ fun ProfileScreen(
                                 foodLikes = foodLikes,
                                 foodDislikes = foodDislikes,
                                 foodAllergies = foodAllergies,
-                                waterTargetMl = waterTargetMl.toIntOrNull() ?: 3000
+                                waterTargetMl = waterTargetMl.toIntOrNull() ?: 3000,
+                                customCalories = if (isCustomGoalsEnabled) customCalories.toDoubleOrNull() else null,
+                                customProtein = if (isCustomGoalsEnabled) customProtein.toDoubleOrNull() else null,
+                                customCarbs = if (isCustomGoalsEnabled) customCarbs.toDoubleOrNull() else null,
+                                customFat = if (isCustomGoalsEnabled) customFat.toDoubleOrNull() else null
                             )
                             saveSuccess = true
                         }
@@ -263,6 +272,62 @@ fun ProfileScreen(
                             isSelected = activityLevel == level,
                             onClick = { activityLevel = level },
                             modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+
+            // Section: Custom Goals
+            ProfileSection(title = "Custom Nutrition Goals", icon = Icons.Default.Edit) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth().clickable { isCustomGoalsEnabled = !isCustomGoalsEnabled }
+                ) {
+                    Text("Enable Custom Goals", color = White, fontSize = 14.sp)
+                    Switch(
+                        checked = isCustomGoalsEnabled,
+                        onCheckedChange = { isCustomGoalsEnabled = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF00E676),
+                            checkedTrackColor = Color(0xFF00E676).copy(alpha = 0.3f),
+                            uncheckedThumbColor = MediumGray,
+                            uncheckedTrackColor = CardGray
+                        )
+                    )
+                }
+
+                if (isCustomGoalsEnabled) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Override your calculated daily targets", fontSize = 11.sp, color = MediumGray)
+                    
+                    ProfileTextField(
+                        label = "Calories (kcal)",
+                        value = customCalories,
+                        onValueChange = { customCalories = it },
+                        keyboardType = KeyboardType.Number
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ProfileTextField(
+                            label = "Protein (g)",
+                            value = customProtein,
+                            onValueChange = { customProtein = it },
+                            keyboardType = KeyboardType.Number,
+                            modifier = Modifier.weight(1f)
+                        )
+                        ProfileTextField(
+                            label = "Carbs (g)",
+                            value = customCarbs,
+                            onValueChange = { customCarbs = it },
+                            keyboardType = KeyboardType.Number,
+                            modifier = Modifier.weight(1f)
+                        )
+                        ProfileTextField(
+                            label = "Fat (g)",
+                            value = customFat,
+                            onValueChange = { customFat = it },
+                            keyboardType = KeyboardType.Number,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
@@ -502,7 +567,11 @@ fun ProfileScreen(
                         foodLikes = foodLikes,
                         foodDislikes = foodDislikes,
                         foodAllergies = foodAllergies,
-                        waterTargetMl = waterTargetMl.toIntOrNull() ?: 3000
+                        waterTargetMl = waterTargetMl.toIntOrNull() ?: 3000,
+                        customCalories = if (isCustomGoalsEnabled) customCalories.toDoubleOrNull() else null,
+                        customProtein = if (isCustomGoalsEnabled) customProtein.toDoubleOrNull() else null,
+                        customCarbs = if (isCustomGoalsEnabled) customCarbs.toDoubleOrNull() else null,
+                        customFat = if (isCustomGoalsEnabled) customFat.toDoubleOrNull() else null
                     )
                     saveSuccess = true
                 },
