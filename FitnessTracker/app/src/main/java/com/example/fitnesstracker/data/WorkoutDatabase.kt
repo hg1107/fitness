@@ -63,7 +63,7 @@ interface WorkoutDao {
     @Query("SELECT * FROM planned_exercises WHERE dayOfWeek = :dayOfWeek ORDER BY id ASC")
     fun getPlannedExercisesForDay(dayOfWeek: Int): Flow<List<PlannedExercise>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPlannedExercise(plannedExercise: PlannedExercise): Long
 
     @Delete
@@ -71,12 +71,15 @@ interface WorkoutDao {
 
     @Query("DELETE FROM planned_exercises WHERE exerciseName = :name")
     suspend fun deletePlannedExercisesByName(name: String)
+    
+    @Query("DELETE FROM planned_exercises")
+    suspend fun deleteAllPlannedExercises()
 
     // Log Session Queries
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertWorkoutSession(session: WorkoutSession): Long
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertWorkoutSets(sets: List<WorkoutSet>)
 
     @Transaction
@@ -266,6 +269,28 @@ data class WaterLog(
     val amountMl: Int
 )
 
+@Entity(
+    tableName = "body_measurements",
+    indices = [Index("date")]
+)
+data class BodyMeasurement(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val date: String, // YYYY-MM-DD
+    val chestCm: Double? = null,
+    val waistCm: Double? = null,
+    val hipsCm: Double? = null,
+    val armsCm: Double? = null,
+    val thighsCm: Double? = null
+)
+
+@Entity(tableName = "workout_programs")
+data class WorkoutProgram(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val programName: String,
+    val description: String = "",
+    val daysJson: String // JSON string containing days and target exercises
+)
+
 @Dao
 interface ActivityDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -294,6 +319,39 @@ interface ActivityDao {
 
     @Query("UPDATE activities SET isSynced = 1 WHERE id IN (:ids)")
     suspend fun markActivitiesAsSynced(ids: List<Long>)
+
+    // Transactional insert: saves activity + GPS points atomically.
+    // No orphaned ActivityRecord can exist without its ActivityPoint rows.
+    @Transaction
+    suspend fun saveActivityWithPoints(
+        record: ActivityRecord,
+        points: List<ActivityPoint>
+    ): Long {
+        val id = insertActivity(record)
+        if (points.isNotEmpty()) {
+            insertActivityPoints(points.map { it.copy(activityId = id) })
+        }
+        return id
+    }
+
+    // SQL-level aggregate queries — replace in-memory filtering in ActivityViewModel
+    @Query("SELECT COALESCE(SUM(distanceMeters), 0.0) FROM activities WHERE startTime >= :since")
+    fun getTotalDistanceMetersSince(since: Long): Flow<Double>
+
+    @Query("SELECT COALESCE(SUM(calories), 0.0) FROM activities WHERE startTime >= :since")
+    fun getTotalCaloriesSince(since: Long): Flow<Double>
+
+    @Query("SELECT COUNT(*) FROM activities WHERE startTime >= :since")
+    fun getActivityCountSince(since: Long): Flow<Int>
+
+    @Query("SELECT COALESCE(SUM(durationSeconds), 0) FROM activities WHERE startTime >= :since")
+    fun getTotalDurationSecondsSince(since: Long): Flow<Long>
+
+    @Query("SELECT COUNT(DISTINCT strftime('%Y-%j', startTime / 1000, 'unixepoch')) FROM activities WHERE startTime >= :since")
+    fun getActiveDayCountSince(since: Long): Flow<Int>
+
+    @Query("SELECT COALESCE(SUM(calories), 0.0) FROM activities WHERE startTime >= :startOfDay")
+    fun getTodayCaloriesBurned(startOfDay: Long): Flow<Double>
 
     // User Profile Queries
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -393,6 +451,30 @@ interface NutritionDao {
     suspend fun deleteWaterLog(log: WaterLog)
 }
 
+@Dao
+interface BodyMeasurementDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBodyMeasurement(measurement: BodyMeasurement)
+
+    @Query("SELECT * FROM body_measurements ORDER BY date DESC")
+    fun getAllBodyMeasurements(): Flow<List<BodyMeasurement>>
+
+    @Delete
+    suspend fun deleteBodyMeasurement(measurement: BodyMeasurement)
+}
+
+@Dao
+interface WorkoutProgramDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertWorkoutProgram(program: WorkoutProgram)
+
+    @Query("SELECT * FROM workout_programs ORDER BY id ASC")
+    fun getAllWorkoutPrograms(): Flow<List<WorkoutProgram>>
+
+    @Delete
+    suspend fun deleteWorkoutProgram(program: WorkoutProgram)
+}
+
 // Migration from v5 to v6: adds waterTargetMl column to user_profile
 val MIGRATION_5_6 = object : Migration(5, 6) {
     override fun migrate(db: SupportSQLiteDatabase) {
@@ -473,6 +555,36 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
     }
 }
 
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `body_measurements` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `date` TEXT NOT NULL,
+                `chestCm` REAL,
+                `waistCm` REAL,
+                `hipsCm` REAL,
+                `armsCm` REAL,
+                `thighsCm` REAL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_body_measurements_date` ON `body_measurements` (`date`)")
+
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `workout_programs` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `programName` TEXT NOT NULL,
+                `description` TEXT NOT NULL DEFAULT '',
+                `daysJson` TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
+}
+
 @Database(
     entities = [
         PlannedExercise::class,
@@ -485,15 +597,19 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
         FoodLog::class,
         SavedMeal::class,
         WeightLog::class,
-        WaterLog::class
+        WaterLog::class,
+        BodyMeasurement::class,
+        WorkoutProgram::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = true
 )
 abstract class WorkoutDatabase : RoomDatabase() {
     abstract fun workoutDao(): WorkoutDao
     abstract fun activityDao(): ActivityDao
     abstract fun nutritionDao(): NutritionDao
+    abstract fun bodyMeasurementDao(): BodyMeasurementDao
+    abstract fun workoutProgramDao(): WorkoutProgramDao
 
     companion object {
         @Volatile
@@ -509,7 +625,7 @@ abstract class WorkoutDatabase : RoomDatabase() {
                 // Fix #26: versions 1-4 have no explicit migrations; users on those
                 // versions get a destructive reset. Version 5→6 is safe (addColumn only).
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
-                .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .build()
                 INSTANCE = instance
                 instance
@@ -522,7 +638,7 @@ abstract class WorkoutDatabase : RoomDatabase() {
                 try {
                     INSTANCE?.close()
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    com.example.fitnesstracker.util.AppLogger.e("WorkoutDatabase", "Failed to close database", e)
                 }
                 INSTANCE = null
             }

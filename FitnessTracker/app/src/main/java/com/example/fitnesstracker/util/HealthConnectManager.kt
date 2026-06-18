@@ -132,7 +132,7 @@ object HealthConnectManager {
                 }
                 unsynced.size
             } catch (e: Exception) {
-                e.printStackTrace()
+                AppLogger.e("HealthConnectManager", "Sync to Health Connect failed", e)
                 0
             }
         }

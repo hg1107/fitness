@@ -13,5 +13,7 @@ import kotlinx.serialization.Serializable
 @Serializable data object Nutrition : NavKey
 @Serializable data class FoodSearch(val mealType: String) : NavKey
 @Serializable data object Profile : NavKey
+@Serializable data object BodyMeasurements : NavKey
+@Serializable data object WorkoutPrograms : NavKey
 
 

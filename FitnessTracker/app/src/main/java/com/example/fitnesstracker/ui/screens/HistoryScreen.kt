@@ -108,7 +108,9 @@ fun HistoryScreen(
                         .weight(1f)
                         .clip(RoundedCornerShape(6.dp))
                         .background(if (selectedTab == index) StravaOrange else Color.Transparent)
-                        .clickable { selectedTab = index }
+                        .clickable(
+                            onClickLabel = "Select $label tab"
+                        ) { selectedTab = index }
                         .padding(vertical = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -125,7 +127,7 @@ fun HistoryScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         when (selectedTab) {
-            0 -> GymLogsSection(workoutViewModel, isImperial)
+            0 -> GymLogsSection(workoutViewModel, activityViewModel, isImperial)
             1 -> GpsTrackingSection(activityViewModel, isImperial, onViewActivityDetail)
             2 -> WeeklyAnalysisSection(workoutViewModel, activityViewModel, nutritionViewModel, isImperial)
         }
@@ -133,7 +135,7 @@ fun HistoryScreen(
 }
 
 @Composable
-fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
+fun GymLogsSection(viewModel: WorkoutViewModel, activityViewModel: ActivityViewModel, isImperial: Boolean) {
     val hasWorkoutsInDb by viewModel.hasWorkoutsInDb.collectAsState(initial = false)
     val filteredSessions by viewModel.paginatedSessions.collectAsState(initial = emptyList())
     val searchQuery by viewModel.historySearchQuery.collectAsState()
@@ -143,6 +145,7 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
     val weeklySetCount by viewModel.weeklySetCount.collectAsState(initial = 0)
     val weeklySessionCount by viewModel.weeklySessionCount.collectAsState(initial = 0)
     val activeDays by viewModel.weeklyActiveDays.collectAsState(initial = List(7) { false })
+    val personalBestMap by viewModel.personalBestMap.collectAsState()
     var sessionToDelete by remember { mutableStateOf<SessionWithSets?>(null) }
 
     var isRefreshing by remember { mutableStateOf(false) }
@@ -246,7 +249,7 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
             onRefresh = {
                 isRefreshing = true
                 coroutineScope.launch {
-                    kotlinx.coroutines.delay(1000)
+                    activityViewModel.triggerCloudSync()
                     isRefreshing = false
                 }
             },
@@ -303,9 +306,7 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
                     items(filteredSessions, key = { it.session.id }) { sessionWithSets ->
                         ExpandableHistoryRow(
                             sessionWithSets = sessionWithSets,
-                            allSessionsForExercise = filteredSessions.filter {
-                                it.session.exerciseName == sessionWithSets.session.exerciseName
-                            },
+                            hasPersonalBest = personalBestMap[sessionWithSets.session.id] ?: false,
                             isImperial = isImperial,
                             onDelete = { sessionToDelete = sessionWithSets }
                         )
@@ -700,7 +701,7 @@ fun ActivityRowItem(
 @Composable
 fun ExpandableHistoryRow(
     sessionWithSets: SessionWithSets,
-    allSessionsForExercise: List<SessionWithSets>,
+    hasPersonalBest: Boolean,
     isImperial: Boolean,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
@@ -719,13 +720,6 @@ fun ExpandableHistoryRow(
     val formattedVolume = displayVolume.let {
         if (it % 1.0 == 0.0) "${it.toInt()}$volumeUnit" else String.format(java.util.Locale.US, "%.1f%s", it, volumeUnit)
     }
-    // PR: this session holds the single highest-weight set ever done for this exercise
-    val thisSessionMaxWeight = sessionWithSets.sets.maxOfOrNull { it.weight } ?: 0.0
-    val hasPersonalBest = thisSessionMaxWeight > 0.0 && allSessionsForExercise
-        .filter { it.session.id != sessionWithSets.session.id }
-        .flatMap { it.sets }
-        .maxOfOrNull { it.weight }
-        ?.let { thisSessionMaxWeight > it } ?: true
 
 
     val chevronRotation by animateFloatAsState(
@@ -743,7 +737,9 @@ fun ExpandableHistoryRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .clickable(
+                    onClickLabel = if (expanded) "Collapse session details" else "Expand session details"
+                ) { expanded = !expanded }
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically

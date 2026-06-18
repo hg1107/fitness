@@ -108,7 +108,7 @@ fun LogExerciseScreen(
                 val r = RingtoneManager.getRingtone(context, notificationUri)
                 r.play()
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.fitnesstracker.util.AppLogger.e("LogExerciseScreen", "Ringtone playback failed", e)
             }
             delay(300)
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)

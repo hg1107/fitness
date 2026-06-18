@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
@@ -10,17 +12,33 @@ android {
     namespace = "com.example.fitnesstracker"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.example.fitnesstracker"
+        applicationId = "com.hg.fitnesstracker"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+
+        val localProps = Properties()
+        val localPropsFile = project.rootProject.file("local.properties")
+        if (localPropsFile.exists()) {
+            val stream = localPropsFile.inputStream()
+            localProps.load(stream)
+            stream.close()
+        }
+        val geminiKey = localProps.getProperty("GEMINI_API_KEY") ?: ""
+        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiKey\"")
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
         }
     }
     compileOptions {
@@ -65,6 +83,7 @@ dependencies {
 
   // Compose
   implementation(libs.androidx.compose.ui)
+  implementation(libs.androidx.compose.ui.text.googlefonts)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.compose.material3)
   // Tooling
@@ -76,6 +95,7 @@ dependencies {
   // Local tests: jUnit, coroutines, Android runner
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation("io.mockk:mockk:1.13.8")
 
   // Instrumented tests: jUnit rules and runners
   androidTestImplementation(libs.androidx.test.core)
@@ -121,4 +141,7 @@ dependencies {
   implementation(libs.hilt.android)
   ksp(libs.hilt.compiler)
   implementation(libs.hilt.navigation.compose)
+
+  // Generative AI (Gemini)
+  implementation(libs.google.generativeai)
 }

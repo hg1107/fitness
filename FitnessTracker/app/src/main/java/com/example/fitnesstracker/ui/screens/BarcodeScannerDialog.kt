@@ -152,7 +152,7 @@ private fun CameraBarcodePreview(
             try {
                 cameraProvider.value?.unbindAll()
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.fitnesstracker.util.AppLogger.e("BarcodeScannerDialog", "Failed to unbind camera provider", e)
             }
         }
     }
@@ -213,7 +213,7 @@ private fun CameraBarcodePreview(
                         analysis
                     )
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    com.example.fitnesstracker.util.AppLogger.e("BarcodeScannerDialog", "Failed to setup process camera provider", e)
                 }
             }, ContextCompat.getMainExecutor(ctx))
             previewView

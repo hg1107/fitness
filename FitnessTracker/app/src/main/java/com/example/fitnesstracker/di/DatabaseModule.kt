@@ -5,6 +5,8 @@ import com.example.fitnesstracker.data.WorkoutDatabase
 import com.example.fitnesstracker.data.WorkoutDao
 import com.example.fitnesstracker.data.ActivityDao
 import com.example.fitnesstracker.data.NutritionDao
+import com.example.fitnesstracker.data.BodyMeasurementDao
+import com.example.fitnesstracker.data.WorkoutProgramDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -38,5 +40,17 @@ object DatabaseModule {
     @Singleton
     fun provideNutritionDao(database: WorkoutDatabase): NutritionDao {
         return database.nutritionDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideBodyMeasurementDao(database: WorkoutDatabase): BodyMeasurementDao {
+        return database.bodyMeasurementDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideWorkoutProgramDao(database: WorkoutDatabase): WorkoutProgramDao {
+        return database.workoutProgramDao()
     }
 }

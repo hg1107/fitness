@@ -197,7 +197,7 @@ class TrackingService : Service() {
                     preferredUnits = profile.preferredUnits
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.fitnesstracker.util.AppLogger.e("TrackingService", "Failed to load user weight", e)
             }
         }
     }
@@ -212,7 +212,7 @@ class TrackingService : Service() {
                 acquire(10 * 60 * 60 * 1000L) // 10 hours max safety timeout
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.fitnesstracker.util.AppLogger.e("TrackingService", "Failed to acquire WakeLock", e)
         }
 
         lastMovementElapsedMs = SystemClock.elapsedRealtime()
@@ -265,7 +265,7 @@ class TrackingService : Service() {
             fusedLocationClient?.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
             _trackingState.update { it.copy(gpsStatus = "GPS Connected") }
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.fitnesstracker.util.AppLogger.e("TrackingService", "Failed to request location updates", e)
             _trackingState.update { it.copy(gpsStatus = "GPS Error") }
         }
     }
@@ -440,7 +440,7 @@ class TrackingService : Service() {
                 wakeLock?.release()
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.fitnesstracker.util.AppLogger.e("TrackingService", "Failed to release WakeLock in stopTrackingService", e)
         }
         wakeLock = null
 
@@ -466,7 +466,7 @@ class TrackingService : Service() {
                 wakeLock?.release()
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.fitnesstracker.util.AppLogger.e("TrackingService", "Failed to release WakeLock in onDestroy", e)
         }
         wakeLock = null
 

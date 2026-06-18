@@ -42,6 +42,8 @@ import kotlinx.coroutines.launch
 fun ProfileScreen(
     viewModel: NutritionViewModel,
     onNavigateBack: () -> Unit,
+    onNavigateToBodyMeasurements: () -> Unit,
+    onNavigateToWorkoutPrograms: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val userProfileState by viewModel.userProfile.collectAsState(initial = null)
@@ -595,6 +597,40 @@ fun ProfileScreen(
                         fontSize = 12.sp,
                         color = MediumGray
                     )
+                }
+            }
+
+            // Section: Extra Features / Logs
+            ProfileSection(title = "More Features", icon = Icons.Default.Star) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = onNavigateToBodyMeasurements,
+                        colors = ButtonDefaults.buttonColors(containerColor = CardGray, contentColor = White),
+                        border = BorderStroke(1.dp, BorderGray),
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF00E676), modifier = Modifier.size(16.dp))
+                            Text("Body Comp", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Button(
+                        onClick = onNavigateToWorkoutPrograms,
+                        colors = ButtonDefaults.buttonColors(containerColor = CardGray, contentColor = White),
+                        border = BorderStroke(1.dp, BorderGray),
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Default.List, contentDescription = null, tint = Color(0xFF00E676), modifier = Modifier.size(16.dp))
+                            Text("Programs", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
 

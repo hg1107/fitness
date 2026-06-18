@@ -1,5 +1,8 @@
 package com.example.fitnesstracker.ui.screens
 
+import com.example.fitnesstracker.ui.AiParsingState
+import com.example.fitnesstracker.util.GeminiNutritionParser
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -62,6 +65,7 @@ fun NutritionScreen(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
+    val snackbarHostState = remember { SnackbarHostState() }
     val userProfileState by viewModel.userProfile.collectAsState(initial = null)
     val currentDate by viewModel.currentDate.collectAsState()
     val dateOffsetDays by viewModel.dateOffsetDays.collectAsState()
@@ -73,6 +77,7 @@ fun NutritionScreen(
     val todayCaloriesBurned by activityViewModel.todayCaloriesBurned.collectAsState(initial = 0.0)
 
     var isRefreshing by remember { mutableStateOf(false) }
+    var showAiLogDialogForMeal by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
 
     val profile = userProfileState
@@ -112,24 +117,29 @@ fun NutritionScreen(
     val consumedCarbs = foodLogs.sumOf { it.carbs * it.quantity }
     val consumedFat = foodLogs.sumOf { it.fat * it.quantity }
 
-    PullToRefreshBox(
-        isRefreshing = isRefreshing,
-        onRefresh = {
-            isRefreshing = true
-            coroutineScope.launch {
-                kotlinx.coroutines.delay(1000)
-                isRefreshing = false
-            }
-        },
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        containerColor = Black,
         modifier = modifier.fillMaxSize()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Black)
-                .verticalScroll(scrollState)
-                .padding(16.dp)
+    ) { padding ->
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                coroutineScope.launch {
+                    activityViewModel.triggerCloudSync()
+                    isRefreshing = false
+                }
+            },
+            modifier = Modifier.padding(padding).fillMaxSize()
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Black)
+                    .verticalScroll(scrollState)
+                    .padding(16.dp)
+            ) {
         // Top Header with date navigation
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -345,9 +355,35 @@ fun NutritionScreen(
                 logs = mealLogs,
                 savedMeals = savedMeals,
                 onAddClick = { onNavigateToSearch(meal) },
-                onDeleteLog = { viewModel.deleteFoodLog(it) },
+                onDeleteLog = { log ->
+                    viewModel.deleteFoodLog(log)
+                    coroutineScope.launch {
+                        val result = snackbarHostState.showSnackbar(
+                            message = "${log.foodName} removed",
+                            actionLabel = "Undo",
+                            duration = SnackbarDuration.Short
+                        )
+                        if (result == SnackbarResult.ActionPerformed) {
+                            viewModel.logFood(
+                                mealType = log.mealType,
+                                foodItem = com.example.fitnesstracker.data.FoodItem(
+                                    name = log.foodName,
+                                    calories = log.calories,
+                                    protein = log.protein,
+                                    carbs = log.carbs,
+                                    fat = log.fat,
+                                    fiber = log.fiber,
+                                    servingUnit = log.servingUnit
+                                ),
+                                quantity = log.quantity,
+                                date = log.date
+                            )
+                        }
+                    }
+                },
                 onSaveMeal = { name -> viewModel.saveAsCustomMeal(name, mealLogs) },
-                onLoadSavedMeal = { savedMeal -> viewModel.loadSavedMeal(savedMeal, meal) }
+                onLoadSavedMeal = { savedMeal -> viewModel.loadSavedMeal(savedMeal, meal) },
+                onAiLogClick = { showAiLogDialogForMeal = meal }
             )
             Spacer(modifier = Modifier.height(14.dp))
         }
@@ -433,6 +469,15 @@ fun NutritionScreen(
         Spacer(modifier = Modifier.height(40.dp))
     }
     }
+    }
+
+    showAiLogDialogForMeal?.let { meal ->
+        AIFoodEntryDialog(
+            mealType = meal,
+            viewModel = viewModel,
+            onDismiss = { showAiLogDialogForMeal = null }
+        )
+    }
 }
 
 @Composable
@@ -486,7 +531,8 @@ fun MealSection(
     onAddClick: () -> Unit,
     onDeleteLog: (FoodLog) -> Unit,
     onSaveMeal: (String) -> Unit,
-    onLoadSavedMeal: (SavedMeal) -> Unit
+    onLoadSavedMeal: (SavedMeal) -> Unit,
+    onAiLogClick: () -> Unit
 ) {
     var showSaveMealDialog by remember { mutableStateOf(false) }
     var showLoadMealSheet by remember { mutableStateOf(false) }
@@ -522,7 +568,13 @@ fun MealSection(
                         )
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onAiLogClick,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Text("✨", color = Color(0xFF00E676), fontSize = 14.sp)
+                    }
                     if (logs.isNotEmpty()) {
                         IconButton(
                             onClick = { showSaveMealDialog = true },
@@ -881,4 +933,173 @@ fun WeightLogSection(weightLogs: List<WeightLog>, onSaveWeight: (Double) -> Unit
             }
         }
     }
+}
+
+@Composable
+fun AIFoodEntryDialog(
+    mealType: String,
+    viewModel: NutritionViewModel,
+    onDismiss: () -> Unit
+) {
+    var inputText by remember { mutableStateOf("") }
+    val aiParsingState by viewModel.aiParsingState.collectAsState()
+
+    AlertDialog(
+        onDismissRequest = {
+            viewModel.clearAiParsingState()
+            onDismiss()
+        },
+        title = {
+            Text(
+                text = "✨ AI Meal Logger - $mealType",
+                color = White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (!GeminiNutritionParser.isAvailable()) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF3E1A1A)),
+                        border = BorderStroke(1.dp, Color(0xFFEF5350).copy(alpha = 0.4f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "Gemini API Key Missing",
+                                color = Color(0xFFEF5350),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Please add 'GEMINI_API_KEY=your_key_here' to your local.properties file to activate AI features.",
+                                color = LightGray,
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp
+                            )
+                        }
+                    }
+                }
+
+                when (val state = aiParsingState) {
+                    is AiParsingState.Idle -> {
+                        Text(
+                            text = "Describe what you ate in natural language, and Gemini will log the macros for you.",
+                            color = LightGray,
+                            fontSize = 13.sp
+                        )
+                        OutlinedTextField(
+                            value = inputText,
+                            onValueChange = { inputText = it },
+                            placeholder = { Text("e.g. 2 eggs, a slice of cheese and a cup of black coffee", color = MediumGray, fontSize = 13.sp) },
+                            modifier = Modifier.fillMaxWidth().height(100.dp),
+                            maxLines = 4,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = White,
+                                unfocusedTextColor = White,
+                                focusedBorderColor = Color(0xFF00E676),
+                                unfocusedBorderColor = BorderGray
+                            )
+                        )
+                    }
+                    is AiParsingState.Loading -> {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator(color = Color(0xFF00E676))
+                            Text("Gemini is analyzing your meal...", color = LightGray, fontSize = 13.sp)
+                        }
+                    }
+                    is AiParsingState.Success -> {
+                        Text("Verify the parsed details:", color = LightGray, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(max = 200.dp)
+                        ) {
+                            state.items.forEach { item ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(BorderGray)
+                                        .padding(10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(item.foodName, color = White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Text(
+                                            "${item.quantity} ${item.servingUnit} • P: ${item.protein.toInt()}g C: ${item.carbs.toInt()}g F: ${item.fat.toInt()}g",
+                                            color = MediumGray,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                    Text("${item.calories.toInt()} kcal", color = Color(0xFF00E676), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                    is AiParsingState.Error -> {
+                        Text("Failed to parse meal description:", color = Color(0xFFEF5350), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text(state.message, color = LightGray, fontSize = 12.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when (val state = aiParsingState) {
+                is AiParsingState.Idle -> {
+                    Button(
+                        onClick = { viewModel.parseWithGemini(inputText, mealType) },
+                        enabled = inputText.isNotBlank() && GeminiNutritionParser.isAvailable(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676), contentColor = Black),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Analyze", fontWeight = FontWeight.Bold)
+                    }
+                }
+                is AiParsingState.Success -> {
+                    Button(
+                        onClick = {
+                            viewModel.logGeminiParsedFoods(mealType, state.items)
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676), contentColor = Black),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Log Meal", fontWeight = FontWeight.Bold)
+                    }
+                }
+                is AiParsingState.Error -> {
+                    Button(
+                        onClick = { viewModel.parseWithGemini(inputText, mealType) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676), contentColor = Black),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Retry", fontWeight = FontWeight.Bold)
+                    }
+                }
+                else -> {}
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    viewModel.clearAiParsingState()
+                    onDismiss()
+                },
+                colors = ButtonDefaults.textButtonColors(contentColor = LightGray)
+            ) {
+                Text(if (aiParsingState is AiParsingState.Success) "Cancel" else "Close")
+            }
+        },
+        containerColor = CardGray
+    )
 }

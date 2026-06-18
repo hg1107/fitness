@@ -6,6 +6,8 @@ import com.example.fitnesstracker.data.WorkoutDao
 import com.example.fitnesstracker.data.WorkoutSession
 import com.example.fitnesstracker.data.WorkoutSet
 import com.example.fitnesstracker.data.UserProfile
+import com.example.fitnesstracker.data.WorkoutProgram
+import com.example.fitnesstracker.data.WorkoutProgramDao
 import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -27,6 +29,7 @@ import org.junit.Test
 class WorkoutViewModelTest {
 
     private lateinit var fakeDao: FakeWorkoutDao
+    private lateinit var fakeProgramDao: FakeWorkoutProgramDao
     private lateinit var viewModel: WorkoutViewModel
     private val testDispatcher = UnconfinedTestDispatcher()
 
@@ -34,7 +37,8 @@ class WorkoutViewModelTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         fakeDao = FakeWorkoutDao()
-        viewModel = WorkoutViewModel(fakeDao, savedStateHandle = SavedStateHandle())
+        fakeProgramDao = FakeWorkoutProgramDao()
+        viewModel = WorkoutViewModel(fakeDao, fakeProgramDao, null, SavedStateHandle())
     }
 
     @After
@@ -184,6 +188,10 @@ class FakeWorkoutDao : WorkoutDao {
         plannedExercises.removeIf { it.exerciseName == name }
     }
 
+    override suspend fun deleteAllPlannedExercises() {
+        plannedExercises.clear()
+    }
+
     override fun getLoggedExerciseNamesSince(since: Long): Flow<List<String>> = flow {
         emit(sessions.filter { it.session.timestamp >= since }.map { it.session.exerciseName }.distinct())
     }
@@ -261,5 +269,18 @@ class FakeWorkoutDao : WorkoutDao {
             dietaryPreference = "Non-Vegetarian",
             foodAllergies = "None"
         )
+    }
+}
+
+class FakeWorkoutProgramDao : WorkoutProgramDao {
+    val programs = mutableListOf<WorkoutProgram>()
+    override suspend fun insertWorkoutProgram(program: WorkoutProgram) {
+        programs.add(program)
+    }
+    override fun getAllWorkoutPrograms(): Flow<List<WorkoutProgram>> = flow {
+        emit(programs)
+    }
+    override suspend fun deleteWorkoutProgram(program: WorkoutProgram) {
+        programs.removeIf { it.id == program.id }
     }
 }

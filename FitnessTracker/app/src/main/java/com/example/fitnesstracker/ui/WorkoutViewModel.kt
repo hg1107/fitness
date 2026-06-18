@@ -13,6 +13,8 @@ import com.example.fitnesstracker.data.SessionWithSets
 import com.example.fitnesstracker.data.WorkoutDao
 import com.example.fitnesstracker.data.WorkoutSession
 import com.example.fitnesstracker.data.WorkoutSet
+import com.example.fitnesstracker.data.WorkoutProgram
+import com.example.fitnesstracker.data.WorkoutProgramDao
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -37,9 +39,14 @@ data class SetInputState(
 @HiltViewModel
 class WorkoutViewModel @Inject constructor(
     private val workoutDao: WorkoutDao,
+    private val workoutProgramDao: WorkoutProgramDao,
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context? = null,
     private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    init {
+        seedWorkoutProgramsIfEmpty()
+    }
 
     // --- Dashboard / Routine Manager ---
     private val _selectedDay = savedStateHandle.getStateFlow("selected_day", getCurrentDayOfWeek()) // 1 = Monday, ..., 7 = Sunday
@@ -56,12 +63,14 @@ class WorkoutViewModel @Inject constructor(
 
     fun addPlannedExercise(name: String, targetMuscle: String) {
         viewModelScope.launch {
-            if (name.isNotBlank()) {
+            val safeName = com.example.fitnesstracker.util.InputValidation.sanitizeName(name, 100)
+            val safeMuscle = com.example.fitnesstracker.util.InputValidation.sanitizeName(targetMuscle, 50)
+            if (safeName.isNotBlank()) {
                 workoutDao.insertPlannedExercise(
                     PlannedExercise(
                         dayOfWeek = _selectedDay.value,
-                        exerciseName = name.trim(),
-                        targetMuscle = targetMuscle.trim().ifEmpty { "General" }
+                        exerciseName = safeName,
+                        targetMuscle = safeMuscle.ifEmpty { "General" }
                     )
                 )
             }
@@ -258,7 +267,7 @@ class WorkoutViewModel @Inject constructor(
     }
 
     fun saveSession(onSuccess: () -> Unit) {
-        val exerciseName = _loggingExerciseName.value
+        val exerciseName = com.example.fitnesstracker.util.InputValidation.sanitizeName(_loggingExerciseName.value, 100)
         if (exerciseName.isBlank() || currentSets.isEmpty()) return
 
         // Filter out completely empty sets (both weight and reps are 0 or blank)
@@ -270,12 +279,13 @@ class WorkoutViewModel @Inject constructor(
         if (validSets.isEmpty()) return
 
         val imperial = _isImperial.value
+        val safeNotes = com.example.fitnesstracker.util.InputValidation.sanitizeNotes(_sessionNotes.value, 500)
 
         viewModelScope.launch {
             val session = WorkoutSession(
                 exerciseName = exerciseName,
                 timestamp = _sessionTimestamp.value ?: System.currentTimeMillis(),
-                notes = _sessionNotes.value.trim()
+                notes = safeNotes
             )
 
             // Convert string inputs to numeric data types (fail-safe defaults)
@@ -381,7 +391,7 @@ class WorkoutViewModel @Inject constructor(
                 .build()
             manager.notify(2001, notification)
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.e("WorkoutViewModel", "Rest timer notification failed", e)
         }
     }
 
@@ -481,13 +491,17 @@ class WorkoutViewModel @Inject constructor(
         return calendar.timeInMillis
     }
 
-    private val currentWeekSessions: Flow<List<SessionWithSets>> = flow {
-        emit(getStartOfWeekTimestamp())
-    }.flatMapLatest { startOfWeek ->
+    // Reactive: re-emits the start-of-week timestamp every 60 seconds so the week
+    // boundary is detected even when the app is kept open overnight.
+    private val currentWeekSessions: Flow<List<SessionWithSets>> = kotlinx.coroutines.flow.flow {
+        while (true) {
+            emit(getStartOfWeekTimestamp())
+            delay(60_000)
+        }
+    }.distinctUntilChanged().flatMapLatest { startOfWeek ->
         workoutDao.getSessionsWithSetsSince(startOfWeek)
     }
 
-    // Calculated metrics for the current calendar week (Monday to Sunday)
     val weeklyVolume: Flow<Double> = currentWeekSessions.map { sessions ->
         sessions.flatMap { it.sets }
             .sumOf { it.weight * it.reps }
@@ -501,6 +515,76 @@ class WorkoutViewModel @Inject constructor(
     val weeklySessionCount: Flow<Int> = currentWeekSessions.map { sessions ->
         sessions.size
     }
+
+    // Volume trend for Dashboard chart — computed in ViewModel, NOT in the Composable.
+    // Takes the 10 most recent sessions and returns (timestamp, volume) pairs.
+    val volumeTrendPoints: StateFlow<List<Pair<Long, Double>>> = allSessions
+        .map { sessions ->
+            sessions
+                .filter { it.sets.isNotEmpty() }
+                .take(10)
+                .reversed()
+                .map { sessionWithSets ->
+                    val vol = sessionWithSets.sets.sumOf { it.weight * it.reps }
+                    sessionWithSets.session.timestamp to vol
+                }
+        }
+        .flowOn(kotlinx.coroutines.Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
+
+    // Precomputed personal best map to avoid O(n²) computations inside the History screen's LazyColumn.
+    // Key: sessionId (Long), Value: isPersonalBest (Boolean).
+    val personalBestMap: StateFlow<Map<Long, Boolean>> = allSessions
+        .map { sessions ->
+            val pbMap = mutableMapOf<Long, Boolean>()
+            val grouped = sessions.groupBy { it.session.exerciseName }
+            for ((_, exerciseSessions) in grouped) {
+                // Sort oldest first to calculate personal records chronologically
+                val sorted = exerciseSessions.sortedBy { it.session.timestamp }
+                var currentMax = 0.0
+                for (session in sorted) {
+                    val sessionMax = session.sets.maxOfOrNull { it.weight } ?: 0.0
+                    if (sessionMax > 0.0) {
+                        if (sessionMax > currentMax) {
+                            pbMap[session.session.id] = true
+                            currentMax = sessionMax
+                        } else {
+                            pbMap[session.session.id] = false
+                        }
+                    } else {
+                        pbMap[session.session.id] = false
+                    }
+                }
+            }
+            pbMap
+        }
+        .flowOn(kotlinx.coroutines.Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyMap()
+        )
+
+    val coachTip: StateFlow<String?> = volumeTrendPoints
+        .transformLatest { trend ->
+            val ctx = appContext
+            if (ctx != null && trend.isNotEmpty()) {
+                val tip = com.example.fitnesstracker.util.GeminiWorkoutCoach.getCoachTip(ctx, trend)
+                emit(tip)
+            } else {
+                emit(null)
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+            initialValue = null
+        )
+
 
     // Boolean list of active workout days in the current week (Index 0 = Monday, ..., 6 = Sunday)
     // Uses the same Monday-based week start as the other weekly stats. The previous
@@ -556,6 +640,129 @@ class WorkoutViewModel @Inject constructor(
         return workoutDao.getAllSessionsForExercise(exerciseName)
     }
 
+    // --- Workout Programs & Templates ---
+    val workoutPrograms: Flow<List<WorkoutProgram>> = workoutProgramDao.getAllWorkoutPrograms()
+
+    fun applyWorkoutProgram(program: WorkoutProgram) {
+        viewModelScope.launch {
+            // 1. Clear current routine
+            workoutDao.deleteAllPlannedExercises()
+            // 2. Parse and insert new program exercises
+            try {
+                val jsonArray = org.json.JSONArray(program.daysJson)
+                for (i in 0 until jsonArray.length()) {
+                    val dayObj = jsonArray.getJSONObject(i)
+                    val dayOfWeek = dayObj.getInt("dayOfWeek")
+                    val exercisesArr = dayObj.getJSONArray("exercises")
+                    for (j in 0 until exercisesArr.length()) {
+                        val exObj = exercisesArr.getJSONObject(j)
+                        val name = exObj.getString("name")
+                        val muscle = exObj.getString("muscle")
+                        workoutDao.insertPlannedExercise(
+                            PlannedExercise(
+                                dayOfWeek = dayOfWeek,
+                                exerciseName = name,
+                                targetMuscle = muscle
+                            )
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                com.example.fitnesstracker.util.AppLogger.e("WorkoutViewModel", "Failed to apply workout program", e)
+            }
+        }
+    }
+
+    private fun seedWorkoutProgramsIfEmpty() {
+        viewModelScope.launch {
+            val count = workoutProgramDao.getAllWorkoutPrograms().firstOrNull()?.size ?: 0
+            if (count == 0) {
+                workoutProgramDao.insertWorkoutProgram(
+                    WorkoutProgram(
+                        programName = "Push / Pull / Legs (PPL)",
+                        description = "Classic 3-day split focusing on push exercises, pull exercises, and leg exercises.",
+                        daysJson = """
+                        [
+                          {"dayOfWeek": 1, "exercises": [
+                            {"name": "Bench Press", "muscle": "Chest"},
+                            {"name": "Overhead Press", "muscle": "Shoulders"},
+                            {"name": "Triceps Pushdown", "muscle": "Triceps"}
+                          ]},
+                          {"dayOfWeek": 3, "exercises": [
+                            {"name": "Lat Pulldown", "muscle": "Back"},
+                            {"name": "Cable Row", "muscle": "Back"},
+                            {"name": "Bicep Curl", "muscle": "Biceps"}
+                          ]},
+                          {"dayOfWeek": 5, "exercises": [
+                            {"name": "Squat", "muscle": "Thighs"},
+                            {"name": "Leg Press", "muscle": "Thighs"},
+                            {"name": "Calf Raise", "muscle": "Calves"}
+                          ]}
+                        ]
+                        """.trimIndent()
+                    )
+                )
+                workoutProgramDao.insertWorkoutProgram(
+                    WorkoutProgram(
+                        programName = "5x5 Strength Program",
+                        description = "Classic linear progression program focusing on fundamental compound lifts.",
+                        daysJson = """
+                        [
+                          {"dayOfWeek": 1, "exercises": [
+                            {"name": "Squat", "muscle": "Thighs"},
+                            {"name": "Bench Press", "muscle": "Chest"},
+                            {"name": "Barbell Row", "muscle": "Back"}
+                          ]},
+                          {"dayOfWeek": 3, "exercises": [
+                            {"name": "Squat", "muscle": "Thighs"},
+                            {"name": "Overhead Press", "muscle": "Shoulders"},
+                            {"name": "Deadlift", "muscle": "Back"}
+                          ]},
+                          {"dayOfWeek": 5, "exercises": [
+                            {"name": "Squat", "muscle": "Thighs"},
+                            {"name": "Bench Press", "muscle": "Chest"},
+                            {"name": "Barbell Row", "muscle": "Back"}
+                          ]}
+                        ]
+                        """.trimIndent()
+                    )
+                )
+                workoutProgramDao.insertWorkoutProgram(
+                    WorkoutProgram(
+                        programName = "Upper / Lower Split",
+                        description = "Effective 4-day split training upper body and lower body twice a week.",
+                        daysJson = """
+                        [
+                          {"dayOfWeek": 1, "exercises": [
+                            {"name": "Bench Press", "muscle": "Chest"},
+                            {"name": "Lat Pulldown", "muscle": "Back"},
+                            {"name": "Overhead Press", "muscle": "Shoulders"},
+                            {"name": "Bicep Curl", "muscle": "Biceps"}
+                          ]},
+                          {"dayOfWeek": 2, "exercises": [
+                            {"name": "Squat", "muscle": "Thighs"},
+                            {"name": "Leg Curl", "muscle": "Thighs"},
+                            {"name": "Calf Raise", "muscle": "Calves"}
+                          ]},
+                          {"dayOfWeek": 4, "exercises": [
+                            {"name": "Incline Press", "muscle": "Chest"},
+                            {"name": "Cable Row", "muscle": "Back"},
+                            {"name": "Lateral Raise", "muscle": "Shoulders"},
+                            {"name": "Triceps Pushdown", "muscle": "Triceps"}
+                          ]},
+                          {"dayOfWeek": 5, "exercises": [
+                            {"name": "Deadlift", "muscle": "Back"},
+                            {"name": "Leg Extension", "muscle": "Thighs"},
+                            {"name": "Calf Raise", "muscle": "Calves"}
+                          ]}
+                        ]
+                        """.trimIndent()
+                    )
+                )
+            }
+        }
+    }
+
     companion object {
         fun getCurrentDayOfWeek(): Int {
             // Calendar: Sunday = 1, Monday = 2, ..., Saturday = 7
@@ -576,13 +783,14 @@ class WorkoutViewModel @Inject constructor(
 
 class WorkoutViewModelFactory(
     private val workoutDao: WorkoutDao,
+    private val workoutProgramDao: WorkoutProgramDao,
     private val appContext: android.content.Context? = null
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
         if (modelClass.isAssignableFrom(WorkoutViewModel::class.java)) {
             val savedStateHandle = extras.createSavedStateHandle()
             @Suppress("UNCHECKED_CAST")
-            return WorkoutViewModel(workoutDao, appContext, savedStateHandle) as T
+            return WorkoutViewModel(workoutDao, workoutProgramDao, appContext, savedStateHandle) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

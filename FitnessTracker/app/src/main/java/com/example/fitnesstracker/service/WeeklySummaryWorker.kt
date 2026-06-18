@@ -12,6 +12,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.fitnesstracker.data.WorkoutDatabase
+import com.example.fitnesstracker.util.AppLogger
 import kotlinx.coroutines.flow.first
 import java.util.Calendar
 import java.util.Locale
@@ -65,7 +66,7 @@ class WeeklySummaryWorker(
             )
             postNotification(text)
         } catch (e: Exception) {
-            e.printStackTrace()
+            AppLogger.e("WeeklySummaryWorker", "Failed to run weekly summary check", e)
         }
         return Result.success()
     }
@@ -92,7 +93,7 @@ class WeeklySummaryWorker(
         try {
             manager.notify(NOTIFICATION_ID, notification)
         } catch (e: Exception) {
-            e.printStackTrace()
+            AppLogger.e("WeeklySummaryWorker", "Failed to post weekly summary notification", e)
         }
     }
 

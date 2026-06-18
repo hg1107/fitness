@@ -30,7 +30,7 @@ object BackupManager {
             }
             true
         } catch (e: Exception) {
-            e.printStackTrace()
+            AppLogger.e("BackupManager", "Database backup failed", e)
             false
         }
     }
@@ -67,7 +67,7 @@ object BackupManager {
             temp.delete()
             true
         } catch (e: Exception) {
-            e.printStackTrace()
+            AppLogger.e("BackupManager", "Database restore failed", e)
             false
         }
     }

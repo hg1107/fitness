@@ -43,6 +43,8 @@ import com.example.fitnesstracker.ui.screens.OnboardingScreen
 import com.example.fitnesstracker.ui.screens.NutritionScreen
 import com.example.fitnesstracker.ui.screens.FoodSearchScreen
 import com.example.fitnesstracker.ui.screens.ProfileScreen
+import com.example.fitnesstracker.ui.screens.BodyMeasurementScreen
+import com.example.fitnesstracker.ui.screens.ProgramsScreen
 
 
 @Composable
@@ -189,6 +191,7 @@ fun MainNavigation() {
               entry<Dashboard> {
                   DashboardScreen(
                       viewModel = workoutViewModel,
+                      activityViewModel = activityViewModel,
                       onLogExercise = { exerciseName ->
                           backStack.add(LogExercise(exerciseName))
                       },
@@ -262,7 +265,21 @@ fun MainNavigation() {
                   ProfileScreen(
                       viewModel = nutritionViewModel,
                       onNavigateBack = { backStack.removeLastOrNull() },
+                      onNavigateToBodyMeasurements = { backStack.add(BodyMeasurements) },
+                      onNavigateToWorkoutPrograms = { backStack.add(WorkoutPrograms) },
                       modifier = Modifier.padding(padding)
+                  )
+              }
+              entry<BodyMeasurements> {
+                  BodyMeasurementScreen(
+                      viewModel = nutritionViewModel,
+                      onNavigateBack = { backStack.removeLastOrNull() }
+                  )
+              }
+              entry<WorkoutPrograms> {
+                  ProgramsScreen(
+                      viewModel = workoutViewModel,
+                      onNavigateBack = { backStack.removeLastOrNull() }
                   )
               }
           }

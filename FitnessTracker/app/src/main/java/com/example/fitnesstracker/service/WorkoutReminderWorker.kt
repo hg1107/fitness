@@ -12,6 +12,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.fitnesstracker.data.WorkoutDatabase
+import com.example.fitnesstracker.util.AppLogger
 import kotlinx.coroutines.flow.first
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
@@ -36,7 +37,7 @@ class WorkoutReminderWorker(
 
             postNotification(planned.size, planned.joinToString(", ") { it.exerciseName })
         } catch (e: Exception) {
-            e.printStackTrace()
+            AppLogger.e("WorkoutReminderWorker", "Failed to run reminder check", e)
         }
         return Result.success()
     }
@@ -64,7 +65,7 @@ class WorkoutReminderWorker(
         try {
             manager.notify(NOTIFICATION_ID, notification)
         } catch (e: Exception) {
-            e.printStackTrace()
+            AppLogger.e("WorkoutReminderWorker", "Failed to post notification", e)
         }
     }
 

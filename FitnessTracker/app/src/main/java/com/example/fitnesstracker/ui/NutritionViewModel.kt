@@ -17,8 +17,9 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
-
-
+import com.example.fitnesstracker.util.InputValidation
+import com.example.fitnesstracker.util.GeminiNutritionParser
+import com.example.fitnesstracker.util.ParsedFoodItem
 
 data class NutritionGoal(
     val calories: Double,
@@ -43,11 +44,19 @@ data class RecommendedFoodItem(
     val reason: String
 )
 
+sealed class AiParsingState {
+    object Idle : AiParsingState()
+    object Loading : AiParsingState()
+    data class Success(val items: List<ParsedFoodItem>) : AiParsingState()
+    data class Error(val message: String) : AiParsingState()
+}
+
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class NutritionViewModel @Inject constructor(
     private val nutritionDao: NutritionDao,
     private val activityDao: ActivityDao,
+    private val bodyMeasurementDao: BodyMeasurementDao,
     private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -75,14 +84,26 @@ class NutritionViewModel @Inject constructor(
     // All weight logs
     val allWeightLogs: Flow<List<WeightLog>> = nutritionDao.getAllWeightLogs()
 
-    // Weekly food logs (last 7 days) — Fix #19: SQL-level date filter, reactive via _currentDate
-    val weeklyFoodLogs: Flow<List<FoodLog>> = _currentDate.flatMapLatest {
-        nutritionDao.getFoodLogsSince(getDateStringDaysAgo(6))
+    // Ticker flow emitting the date string 6 days ago, recomputed every 60 seconds
+    private val nutritionDaysAgoFlow: Flow<String> = kotlinx.coroutines.flow.flow {
+        while (true) {
+            emit(getDateStringDaysAgo(6))
+            kotlinx.coroutines.delay(60_000)
+        }
+    }.distinctUntilChanged()
+
+    // Weekly food logs (last 7 days) — SQL-level date filter, recomputes when date or day boundaries change
+    val weeklyFoodLogs: Flow<List<FoodLog>> = combine(_currentDate, nutritionDaysAgoFlow) { _, since ->
+        since
+    }.flatMapLatest { since ->
+        nutritionDao.getFoodLogsSince(since)
     }
 
-    // Weekly water logs (last 7 days) — Fix #19: SQL-level date filter, reactive via _currentDate
-    val weeklyWaterLogs: Flow<List<WaterLog>> = _currentDate.flatMapLatest {
-        nutritionDao.getWaterLogsSince(getDateStringDaysAgo(6))
+    // Weekly water logs (last 7 days) — SQL-level date filter, recomputes when date or day boundaries change
+    val weeklyWaterLogs: Flow<List<WaterLog>> = combine(_currentDate, nutritionDaysAgoFlow) { _, since ->
+        since
+    }.flatMapLatest { since ->
+        nutritionDao.getWaterLogsSince(since)
     }
 
     // Saved meals
@@ -116,9 +137,9 @@ class NutritionViewModel @Inject constructor(
     private val _parsedAIEntry = MutableStateFlow<List<ParsedFoodLogItem>>(emptyList())
     val parsedAIEntry: StateFlow<List<ParsedFoodLogItem>> = _parsedAIEntry.asStateFlow()
 
-    // Recommendations state — Fix #5: add distinctUntilChanged on food items to avoid
-    // recalculating on every unrelated food-log change
-    val foodRecommendations: Flow<List<RecommendedFoodItem>> = combine(
+    // Recommendations: O(n) scoring offloaded to Dispatchers.Default, cached as StateFlow.
+    // distinctUntilChanged on food items prevents re-scoring on every unrelated log change.
+    val foodRecommendations: StateFlow<List<RecommendedFoodItem>> = combine(
         nutritionDao.getAllFoodItems().distinctUntilChanged(),
         userProfile,
         todayFoodLogs
@@ -157,6 +178,12 @@ class NutritionViewModel @Inject constructor(
             remainingFat = remainingFat
         )
     }
+    .flowOn(kotlinx.coroutines.Dispatchers.Default)  // keep O(n) scoring off the main thread
+    .stateIn(
+        scope = viewModelScope,
+        started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList()
+    )
 
     init {
         seedFoodDatabaseIfEmpty()
@@ -234,22 +261,22 @@ class NutritionViewModel @Inject constructor(
         viewModelScope.launch {
             val profile = UserProfile(
                 id = "default_user",
-                name = name,
-                age = age,
+                name = InputValidation.sanitizeName(name, 100).ifEmpty { "Athlete" },
+                age = age.coerceIn(5, 120),
                 gender = gender,
-                weightKg = weightKg,
-                heightCm = heightCm,
+                weightKg = weightKg.coerceIn(10.0, 300.0),
+                heightCm = heightCm.coerceIn(50.0, 250.0),
                 fitnessGoal = fitnessGoal,
                 activityLevel = activityLevel,
                 dietaryPreference = dietaryPreference,
                 onboardingComplete = true,
                 preferredUnits = preferredUnits,
-                foodLikes = foodLikes,
-                foodDislikes = foodDislikes,
-                foodAllergies = foodAllergies
+                foodLikes = InputValidation.sanitizeCommaList(foodLikes, 300),
+                foodDislikes = InputValidation.sanitizeCommaList(foodDislikes, 300),
+                foodAllergies = InputValidation.sanitizeCommaList(foodAllergies, 300)
             )
             activityDao.insertUserProfile(profile)
-            
+
             // Also log initial weight log
             nutritionDao.insertWeightLog(
                 WeightLog(
@@ -341,6 +368,37 @@ class NutritionViewModel @Inject constructor(
         }
     }
 
+    // --- Body Composition Tracking ---
+    val bodyMeasurements: Flow<List<BodyMeasurement>> = bodyMeasurementDao.getAllBodyMeasurements()
+
+    fun logBodyMeasurement(
+        chest: Double?,
+        waist: Double?,
+        hips: Double?,
+        arms: Double?,
+        thighs: Double?,
+        date: String = _currentDate.value
+    ) {
+        viewModelScope.launch {
+            bodyMeasurementDao.insertBodyMeasurement(
+                BodyMeasurement(
+                    date = date,
+                    chestCm = chest,
+                    waistCm = waist,
+                    hipsCm = hips,
+                    armsCm = arms,
+                    thighsCm = thighs
+                )
+            )
+        }
+    }
+
+    fun deleteBodyMeasurement(measurement: BodyMeasurement) {
+        viewModelScope.launch {
+            bodyMeasurementDao.deleteBodyMeasurement(measurement)
+        }
+    }
+
     // Full profile update (used by ProfileScreen)
     fun updateUserProfile(
         name: String,
@@ -365,19 +423,19 @@ class NutritionViewModel @Inject constructor(
             val current = activityDao.getUserProfileSync() ?: UserProfile()
             activityDao.insertUserProfile(
                 current.copy(
-                    name = name.trim().ifEmpty { "Athlete" },
-                    age = age,
+                    name = InputValidation.sanitizeName(name, 100).ifEmpty { "Athlete" },
+                    age = age.coerceIn(5, 120),
                     gender = gender,
-                    weightKg = weightKg,
-                    heightCm = heightCm,
+                    weightKg = weightKg.coerceIn(10.0, 300.0),
+                    heightCm = heightCm.coerceIn(50.0, 250.0),
                     fitnessGoal = fitnessGoal,
                     activityLevel = activityLevel,
                     dietaryPreference = dietaryPreference,
                     preferredUnits = preferredUnits,
-                    foodLikes = foodLikes,
-                    foodDislikes = foodDislikes,
-                    foodAllergies = foodAllergies,
-                    waterTargetMl = waterTargetMl,
+                    foodLikes = InputValidation.sanitizeCommaList(foodLikes, 300),
+                    foodDislikes = InputValidation.sanitizeCommaList(foodDislikes, 300),
+                    foodAllergies = InputValidation.sanitizeCommaList(foodAllergies, 300),
+                    waterTargetMl = waterTargetMl.coerceIn(500, 10_000),
                     customCalories = customCalories,
                     customProtein = customProtein,
                     customCarbs = customCarbs,
@@ -780,7 +838,47 @@ class NutritionViewModel @Inject constructor(
         }
     }
 
+    private val _aiParsingState = MutableStateFlow<AiParsingState>(AiParsingState.Idle)
+    val aiParsingState: StateFlow<AiParsingState> = _aiParsingState.asStateFlow()
 
+    fun parseWithGemini(text: String, mealType: String) {
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            _aiParsingState.value = AiParsingState.Loading
+            try {
+                val items = GeminiNutritionParser.parseFoodInput(text)
+                _aiParsingState.value = AiParsingState.Success(items)
+            } catch (e: Exception) {
+                _aiParsingState.value = AiParsingState.Error(e.message ?: "Failed to parse meal input")
+            }
+        }
+    }
+
+    fun clearAiParsingState() {
+        _aiParsingState.value = AiParsingState.Idle
+    }
+
+    fun logGeminiParsedFoods(mealType: String, items: List<ParsedFoodItem>) {
+        viewModelScope.launch {
+            for (item in items) {
+                nutritionDao.insertFoodLog(
+                    FoodLog(
+                        date = _currentDate.value,
+                        mealType = mealType,
+                        foodName = item.foodName,
+                        calories = item.calories,
+                        protein = item.protein,
+                        carbs = item.carbs,
+                        fat = item.fat,
+                        fiber = item.fiber,
+                        quantity = item.quantity,
+                        servingUnit = item.servingUnit
+                    )
+                )
+            }
+            _aiParsingState.value = AiParsingState.Idle
+        }
+    }
 
     companion object {
         private val SEED_FOODS = listOf(
@@ -824,13 +922,14 @@ class NutritionViewModel @Inject constructor(
 
 class NutritionViewModelFactory(
     private val nutritionDao: NutritionDao,
-    private val activityDao: ActivityDao
+    private val activityDao: ActivityDao,
+    private val bodyMeasurementDao: BodyMeasurementDao
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
         if (modelClass.isAssignableFrom(NutritionViewModel::class.java)) {
             val savedStateHandle = extras.createSavedStateHandle()
             @Suppress("UNCHECKED_CAST")
-            return NutritionViewModel(nutritionDao, activityDao, savedStateHandle) as T
+            return NutritionViewModel(nutritionDao, activityDao, bodyMeasurementDao, savedStateHandle) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

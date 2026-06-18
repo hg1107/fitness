@@ -15,19 +15,29 @@ import java.net.URL
 object OpenFoodFactsClient {
 
     suspend fun fetchProduct(barcode: String): FoodItem? = withContext(Dispatchers.IO) {
+        var conn: HttpURLConnection? = null
         try {
             val url = URL(
                 "https://world.openfoodfacts.org/api/v2/product/$barcode.json" +
                     "?fields=product_name,nutriments"
             )
-            val conn = url.openConnection() as HttpURLConnection
+            conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 10_000
             conn.readTimeout = 10_000
             conn.setRequestProperty("User-Agent", "FitnessTracker-Android/1.0")
+
+            // Check HTTP status before attempting to parse body
+            val responseCode = conn.responseCode
+            if (responseCode != HttpURLConnection.HTTP_OK) {
+                android.util.Log.w("OpenFoodFacts", "HTTP $responseCode for barcode $barcode")
+                return@withContext null
+            }
+
             val body = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
+            if (body.isBlank()) return@withContext null
 
             val json = JSONObject(body)
+            if (json.optString("status") == "product_not_found") return@withContext null
             val product = json.optJSONObject("product") ?: return@withContext null
             val name = product.optString("product_name", "").trim()
             if (name.isEmpty()) return@withContext null
@@ -48,8 +58,10 @@ object OpenFoodFactsClient {
                 isVegan = false
             )
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.e("OpenFoodFacts", "Failed to fetch barcode $barcode", e)
             null
+        } finally {
+            conn?.disconnect()
         }
     }
 }
