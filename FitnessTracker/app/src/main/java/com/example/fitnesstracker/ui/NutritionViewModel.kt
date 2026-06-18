@@ -1,9 +1,14 @@
 package com.example.fitnesstracker.ui
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.CreationExtras
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.example.fitnesstracker.data.*
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -39,17 +44,19 @@ data class RecommendedFoodItem(
 )
 
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
-class NutritionViewModel(
+@HiltViewModel
+class NutritionViewModel @Inject constructor(
     private val nutritionDao: NutritionDao,
-    private val activityDao: ActivityDao
+    private val activityDao: ActivityDao,
+    private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
-    private val _currentDate = MutableStateFlow(getCurrentDateString())
-    val currentDate: StateFlow<String> = _currentDate.asStateFlow()
+    private val _currentDate = savedStateHandle.getStateFlow("current_date", getCurrentDateString())
+    val currentDate: StateFlow<String> = _currentDate
 
     // Date offset in days from today (0 = today, -1 = yesterday, etc.)
-    private val _dateOffsetDays = MutableStateFlow(0)
-    val dateOffsetDays: StateFlow<Int> = _dateOffsetDays.asStateFlow()
+    private val _dateOffsetDays = savedStateHandle.getStateFlow("date_offset_days", 0)
+    val dateOffsetDays: StateFlow<Int> = _dateOffsetDays
 
     val userProfile: Flow<UserProfile?> = activityDao.getUserProfile()
 
@@ -85,18 +92,25 @@ class NutritionViewModel(
     val recentFoods: Flow<List<String>> = nutritionDao.getRecentFoods()
 
     // Search results state
-    private val _searchQuery = MutableStateFlow("")
-    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+    private val _searchQuery = savedStateHandle.getStateFlow("search_query", "")
+    val searchQuery: StateFlow<String> = _searchQuery
 
-    val searchResults: Flow<List<FoodItem>> = _searchQuery
-        .debounce(300)
-        .flatMapLatest { query ->
-            if (query.isBlank()) {
-                nutritionDao.getAllFoodItems()
-            } else {
-                nutritionDao.searchFoodItems(query)
-            }
+    private val _foodLimit = savedStateHandle.getStateFlow("food_limit", 50)
+    val foodLimit: StateFlow<Int> = _foodLimit
+
+    val searchResults: Flow<List<FoodItem>> = combine(
+        _searchQuery,
+        _foodLimit
+    ) { query, limit ->
+        query to limit
+    }.debounce(300)
+    .flatMapLatest { (query, limit) ->
+        if (query.isBlank()) {
+            nutritionDao.getAllFoodItemsLimit(limit)
+        } else {
+            nutritionDao.searchFoodItemsLimit(query, limit)
         }
+    }
 
     // AI Entry Parsed state
     private val _parsedAIEntry = MutableStateFlow<List<ParsedFoodLogItem>>(emptyList())
@@ -149,7 +163,7 @@ class NutritionViewModel(
     }
 
     fun selectDate(date: String) {
-        _currentDate.value = date
+        savedStateHandle["current_date"] = date
     }
 
     fun goToPreviousDay() {
@@ -157,8 +171,9 @@ class NutritionViewModel(
         val cal = Calendar.getInstance()
         cal.time = sdf.parse(_currentDate.value) ?: cal.time
         cal.add(Calendar.DAY_OF_YEAR, -1)
-        _currentDate.value = sdf.format(cal.time)
-        _dateOffsetDays.value--
+        val newDate = sdf.format(cal.time)
+        savedStateHandle["current_date"] = newDate
+        savedStateHandle["date_offset_days"] = (savedStateHandle.get<Int>("date_offset_days") ?: 0) - 1
     }
 
     fun goToNextDay() {
@@ -168,26 +183,32 @@ class NutritionViewModel(
         val cal = Calendar.getInstance()
         cal.time = sdf.parse(_currentDate.value) ?: cal.time
         cal.add(Calendar.DAY_OF_YEAR, 1)
-        _currentDate.value = sdf.format(cal.time)
-        _dateOffsetDays.value++
+        val newDate = sdf.format(cal.time)
+        savedStateHandle["current_date"] = newDate
+        savedStateHandle["date_offset_days"] = (savedStateHandle.get<Int>("date_offset_days") ?: 0) + 1
     }
 
     fun goToToday() {
-        _currentDate.value = getCurrentDateString()
-        _dateOffsetDays.value = 0
+        savedStateHandle["current_date"] = getCurrentDateString()
+        savedStateHandle["date_offset_days"] = 0
     }
 
     fun isViewingToday(): Boolean = _currentDate.value == getCurrentDateString()
 
     fun updateSearchQuery(query: String) {
-        _searchQuery.value = query
+        savedStateHandle["search_query"] = query
+        savedStateHandle["food_limit"] = 50
+    }
+
+    fun loadMoreFood() {
+        savedStateHandle["food_limit"] = _foodLimit.value + 50
     }
 
     // Insert a product fetched via barcode scan and surface it in search results
     fun addScannedFood(item: FoodItem) {
         viewModelScope.launch {
             nutritionDao.insertFoodItem(item)
-            _searchQuery.value = item.name
+            savedStateHandle["search_query"] = item.name
         }
     }
 
@@ -415,9 +436,11 @@ class NutritionViewModel(
 
     // Offline heuristic-based AI text entry parser
     fun parseTextEntry(text: String) {
+        // Truncate input to avoid DoS/Regex processing overhead from massive texts
+        val safeText = text.take(300)
         viewModelScope.launch {
             val parsed = mutableListOf<ParsedFoodLogItem>()
-            val segments = text.split(Regex(",|\\band\\b|\\+"), 0)
+            val segments = safeText.split(Regex(",|\\band\\b|\\+"), 0)
 
             for (segment in segments) {
                 val trimmed = segment.trim()
@@ -443,9 +466,12 @@ class NutritionViewModel(
                     Regex("\\b(of|bowl|glass|cup|plate|piece|pieces|serving|servings|g|ml|scoop|scoops|tbsp|tsp)\\b", RegexOption.IGNORE_CASE),
                     ""
                 ).trim()
+
+                // Sanitize input: retain only alphanumeric characters and spaces
+                foodQuery = foodQuery.replace(Regex("[^a-zA-Z0-9\\s]"), "").replace(Regex("\\s+"), " ").trim()
                 
                 if (foodQuery.isEmpty()) {
-                    foodQuery = trimmed
+                    continue // skip empty search queries
                 }
 
                 // Match in DB
@@ -800,10 +826,11 @@ class NutritionViewModelFactory(
     private val nutritionDao: NutritionDao,
     private val activityDao: ActivityDao
 ) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+    override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
         if (modelClass.isAssignableFrom(NutritionViewModel::class.java)) {
+            val savedStateHandle = extras.createSavedStateHandle()
             @Suppress("UNCHECKED_CAST")
-            return NutritionViewModel(nutritionDao, activityDao) as T
+            return NutritionViewModel(nutritionDao, activityDao, savedStateHandle) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

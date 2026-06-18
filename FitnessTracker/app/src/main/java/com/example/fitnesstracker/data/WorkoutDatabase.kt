@@ -14,7 +14,13 @@ data class PlannedExercise(
     val targetMuscle: String
 )
 
-@Entity(tableName = "workout_sessions")
+@Entity(
+    tableName = "workout_sessions",
+    indices = [
+        Index("timestamp"),
+        Index("exerciseName")
+    ]
+)
 data class WorkoutSession(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val exerciseName: String,
@@ -83,6 +89,21 @@ interface WorkoutDao {
     @Transaction
     @Query("SELECT * FROM workout_sessions ORDER BY timestamp DESC")
     fun getAllSessionsWithSets(): Flow<List<SessionWithSets>>
+
+    @Transaction
+    @Query("SELECT * FROM workout_sessions ORDER BY timestamp DESC LIMIT :limit")
+    fun getSessionsWithSetsLimit(limit: Int): Flow<List<SessionWithSets>>
+
+    @Transaction
+    @Query("SELECT * FROM workout_sessions WHERE exerciseName LIKE '%' || :query || '%' ORDER BY timestamp DESC LIMIT :limit")
+    fun getSessionsWithSetsSearchLimit(query: String, limit: Int): Flow<List<SessionWithSets>>
+
+    @Transaction
+    @Query("SELECT * FROM workout_sessions WHERE timestamp >= :since ORDER BY timestamp DESC")
+    fun getSessionsWithSetsSince(since: Long): Flow<List<SessionWithSets>>
+
+    @Query("SELECT timestamp FROM workout_sessions ORDER BY timestamp DESC")
+    fun getAllSessionTimestamps(): Flow<List<Long>>
 
     @Transaction
     @Query("SELECT * FROM workout_sessions WHERE exerciseName = :exerciseName ORDER BY timestamp DESC LIMIT 1")
@@ -206,7 +227,10 @@ data class FoodItem(
     val allergens: String = ""
 )
 
-@Entity(tableName = "food_logs")
+@Entity(
+    tableName = "food_logs",
+    indices = [Index("date")]
+)
 data class FoodLog(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val date: String, // YYYY-MM-DD
@@ -299,6 +323,12 @@ interface NutritionDao {
 
     @Query("SELECT * FROM food_items WHERE name LIKE '%' || :query || '%' ORDER BY name ASC")
     fun searchFoodItems(query: String): Flow<List<FoodItem>>
+
+    @Query("SELECT * FROM food_items ORDER BY name ASC LIMIT :limit")
+    fun getAllFoodItemsLimit(limit: Int): Flow<List<FoodItem>>
+
+    @Query("SELECT * FROM food_items WHERE name LIKE '%' || :query || '%' ORDER BY name ASC LIMIT :limit")
+    fun searchFoodItemsLimit(query: String, limit: Int): Flow<List<FoodItem>>
 
     @Query("SELECT * FROM food_items WHERE name = :name LIMIT 1")
     suspend fun getFoodItemByName(name: String): FoodItem?
@@ -434,6 +464,15 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
     }
 }
 
+// Migration from v8 to v9: adds indices to food_logs and workout_sessions
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_food_logs_date` ON `food_logs` (`date`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_workout_sessions_timestamp` ON `workout_sessions` (`timestamp`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_workout_sessions_exerciseName` ON `workout_sessions` (`exerciseName`)")
+    }
+}
+
 @Database(
     entities = [
         PlannedExercise::class,
@@ -448,8 +487,8 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
         WeightLog::class,
         WaterLog::class
     ],
-    version = 8,
-    exportSchema = false
+    version = 9,
+    exportSchema = true
 )
 abstract class WorkoutDatabase : RoomDatabase() {
     abstract fun workoutDao(): WorkoutDao
@@ -470,7 +509,7 @@ abstract class WorkoutDatabase : RoomDatabase() {
                 // Fix #26: versions 1-4 have no explicit migrations; users on those
                 // versions get a destructive reset. Version 5→6 is safe (addColumn only).
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
-                .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                 .build()
                 INSTANCE = instance
                 instance

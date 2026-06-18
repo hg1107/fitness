@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
@@ -46,22 +47,10 @@ import com.example.fitnesstracker.ui.screens.ProfileScreen
 
 @Composable
 fun MainNavigation() {
-  val context = LocalContext.current
-  val database = WorkoutDatabase.getDatabase(context)
-  val workoutDao = database.workoutDao()
-  val activityDao = database.activityDao()
-  val nutritionDao = database.nutritionDao()
-  
-  // Set up view models
-  val workoutViewModel: WorkoutViewModel = viewModel(
-      factory = WorkoutViewModelFactory(workoutDao, context.applicationContext)
-  )
-  val activityViewModel: ActivityViewModel = viewModel(
-      factory = ActivityViewModelFactory(activityDao, context.applicationContext)
-  )
-  val nutritionViewModel: NutritionViewModel = viewModel(
-      factory = NutritionViewModelFactory(nutritionDao, activityDao)
-  )
+  // Set up view models via Hilt DI
+  val workoutViewModel: WorkoutViewModel = hiltViewModel()
+  val activityViewModel: ActivityViewModel = hiltViewModel()
+  val nutritionViewModel: NutritionViewModel = hiltViewModel()
 
   val userProfileState by nutritionViewModel.userProfile.collectAsState(initial = null)
 

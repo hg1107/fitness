@@ -11,7 +11,9 @@ import androidx.compose.ui.Modifier
 import com.example.fitnesstracker.service.WeeklySummaryWorker
 import com.example.fitnesstracker.service.WorkoutReminderWorker
 import com.example.fitnesstracker.theme.FitnessTrackerTheme
+import dagger.hilt.android.AndroidEntryPoint
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)

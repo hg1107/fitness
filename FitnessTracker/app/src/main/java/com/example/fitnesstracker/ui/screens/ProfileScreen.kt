@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.health.connect.client.PermissionController
 import com.example.fitnesstracker.theme.*
 import com.example.fitnesstracker.ui.NutritionViewModel
+import com.example.fitnesstracker.ui.components.ProgressChartView
 import com.example.fitnesstracker.util.BackupManager
 import com.example.fitnesstracker.util.DataExporter
 import com.example.fitnesstracker.util.HealthConnectManager
@@ -44,6 +45,7 @@ fun ProfileScreen(
     modifier: Modifier = Modifier
 ) {
     val userProfileState by viewModel.userProfile.collectAsState(initial = null)
+    val weightLogs by viewModel.allWeightLogs.collectAsState(initial = emptyList())
 
     // Fix #1: Never use bare return inside a Composable — show a loading spinner instead
     if (userProfileState == null) {
@@ -68,12 +70,18 @@ fun ProfileScreen(
     var name by remember(profile.id) { mutableStateOf(profile.name) }
     var age by remember(profile.id) { mutableStateOf(profile.age.toString()) }
     var gender by remember(profile.id) { mutableStateOf(profile.gender) }
-    var weightKg by remember(profile.id) { mutableStateOf(profile.weightKg.toString()) }
-    var heightCm by remember(profile.id) { mutableStateOf(profile.heightCm.toString()) }
+    var preferredUnits by remember(profile.id) { mutableStateOf(profile.preferredUnits) }
+    var weightDisplay by remember(profile.id) {
+        val w = if (profile.preferredUnits == "Imperial") profile.weightKg * 2.20462 else profile.weightKg
+        mutableStateOf(String.format(java.util.Locale.US, "%.1f", w))
+    }
+    var heightDisplay by remember(profile.id) {
+        val h = if (profile.preferredUnits == "Imperial") profile.heightCm / 2.54 else profile.heightCm
+        mutableStateOf(String.format(java.util.Locale.US, "%.1f", h))
+    }
     var fitnessGoal by remember(profile.id) { mutableStateOf(profile.fitnessGoal) }
     var activityLevel by remember(profile.id) { mutableStateOf(profile.activityLevel) }
     var dietaryPreference by remember(profile.id) { mutableStateOf(profile.dietaryPreference) }
-    var preferredUnits by remember(profile.id) { mutableStateOf(profile.preferredUnits) }
     var foodLikes by remember(profile.id) { mutableStateOf(profile.foodLikes) }
     var foodDislikes by remember(profile.id) { mutableStateOf(profile.foodDislikes) }
     var foodAllergies by remember(profile.id) { mutableStateOf(profile.foodAllergies) }
@@ -114,12 +122,16 @@ fun ProfileScreen(
                 actions = {
                     TextButton(
                         onClick = {
+                            val rawWeight = weightDisplay.toDoubleOrNull() ?: profile.weightKg
+                            val rawHeight = heightDisplay.toDoubleOrNull() ?: profile.heightCm
+                            val savedWeight = if (preferredUnits == "Imperial") rawWeight / 2.20462 else rawWeight
+                            val savedHeight = if (preferredUnits == "Imperial") rawHeight * 2.54 else rawHeight
                             viewModel.updateUserProfile(
                                 name = name,
                                 age = age.toIntOrNull() ?: profile.age,
                                 gender = gender,
-                                weightKg = weightKg.toDoubleOrNull() ?: profile.weightKg,
-                                heightCm = heightCm.toDoubleOrNull() ?: profile.heightCm,
+                                weightKg = savedWeight,
+                                heightCm = savedHeight,
                                 fitnessGoal = fitnessGoal,
                                 activityLevel = activityLevel,
                                 dietaryPreference = dietaryPreference,
@@ -200,16 +212,16 @@ fun ProfileScreen(
                         modifier = Modifier.weight(1f)
                     )
                     ProfileTextField(
-                        label = "Weight (kg)",
-                        value = weightKg,
-                        onValueChange = { weightKg = it },
+                        label = if (preferredUnits == "Imperial") "Weight (lbs)" else "Weight (kg)",
+                        value = weightDisplay,
+                        onValueChange = { weightDisplay = it },
                         keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f)
                     )
                     ProfileTextField(
-                        label = "Height (cm)",
-                        value = heightCm,
-                        onValueChange = { heightCm = it },
+                        label = if (preferredUnits == "Imperial") "Height (in)" else "Height (cm)",
+                        value = heightDisplay,
+                        onValueChange = { heightDisplay = it },
                         keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f)
                     )
@@ -228,8 +240,14 @@ fun ProfileScreen(
                 }
 
                 // Live BMI indicator based on the values being edited
-                val bmi = weightKg.toDoubleOrNull()?.let { w ->
-                    heightCm.toDoubleOrNull()?.takeIf { it > 0 }?.let { h ->
+                val liveWeightKg = weightDisplay.toDoubleOrNull()?.let { w ->
+                    if (preferredUnits == "Imperial") w / 2.20462 else w
+                }
+                val liveHeightCm = heightDisplay.toDoubleOrNull()?.let { h ->
+                    if (preferredUnits == "Imperial") h * 2.54 else h
+                }
+                val bmi = liveWeightKg?.let { w ->
+                    liveHeightCm?.takeIf { it > 0 }?.let { h ->
                         w / ((h / 100.0) * (h / 100.0))
                     }
                 }
@@ -245,6 +263,23 @@ fun ProfileScreen(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF00E676)
+                    )
+                }
+            }
+
+            // Section: Weight Trend
+            if (weightLogs.isNotEmpty()) {
+                val chartPoints = remember(weightLogs, preferredUnits) {
+                    weightLogs.map { log ->
+                        val weightVal = if (preferredUnits == "Imperial") com.example.fitnesstracker.util.UnitConverter.kgToLbs(log.weightKg) else log.weightKg
+                        log.timestamp to weightVal
+                    }
+                }
+                ProfileSection(title = "Weight Trend", icon = Icons.Default.Person) {
+                    ProgressChartView(
+                        points = chartPoints,
+                        valueSuffix = if (preferredUnits == "Imperial") "lbs" else "kg",
+                        lineColor = Color(0xFF00E676)
                     )
                 }
             }
@@ -375,7 +410,20 @@ fun ProfileScreen(
                         ProfileChip(
                             label = unit,
                             isSelected = preferredUnits == unit,
-                            onClick = { preferredUnits = unit }
+                            onClick = {
+                                if (preferredUnits != unit) {
+                                    val currentW = weightDisplay.toDoubleOrNull() ?: 0.0
+                                    val currentH = heightDisplay.toDoubleOrNull() ?: 0.0
+                                    if (unit == "Imperial") {
+                                        weightDisplay = String.format(java.util.Locale.US, "%.1f", currentW * 2.20462)
+                                        heightDisplay = String.format(java.util.Locale.US, "%.1f", currentH / 2.54)
+                                    } else {
+                                        weightDisplay = String.format(java.util.Locale.US, "%.1f", currentW / 2.20462)
+                                        heightDisplay = String.format(java.util.Locale.US, "%.1f", currentH * 2.54)
+                                    }
+                                    preferredUnits = unit
+                                }
+                            }
                         )
                     }
                 }
@@ -554,12 +602,16 @@ fun ProfileScreen(
             Spacer(modifier = Modifier.height(4.dp))
             Button(
                 onClick = {
+                    val rawWeight = weightDisplay.toDoubleOrNull() ?: profile.weightKg
+                    val rawHeight = heightDisplay.toDoubleOrNull() ?: profile.heightCm
+                    val savedWeight = if (preferredUnits == "Imperial") rawWeight / 2.20462 else rawWeight
+                    val savedHeight = if (preferredUnits == "Imperial") rawHeight * 2.54 else rawHeight
                     viewModel.updateUserProfile(
                         name = name,
                         age = age.toIntOrNull() ?: profile.age,
                         gender = gender,
-                        weightKg = weightKg.toDoubleOrNull() ?: profile.weightKg,
-                        heightCm = heightCm.toDoubleOrNull() ?: profile.heightCm,
+                        weightKg = savedWeight,
+                        heightCm = savedHeight,
                         fitnessGoal = fitnessGoal,
                         activityLevel = activityLevel,
                         dietaryPreference = dietaryPreference,

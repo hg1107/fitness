@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +52,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import com.example.fitnesstracker.util.formatDuration
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import com.example.fitnesstracker.theme.StravaOrange
 
 @Composable
 fun HistoryScreen(
@@ -130,17 +134,19 @@ fun HistoryScreen(
 
 @Composable
 fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
-    val allSessions by viewModel.allSessions.collectAsState(initial = emptyList())
+    val hasWorkoutsInDb by viewModel.hasWorkoutsInDb.collectAsState(initial = false)
+    val filteredSessions by viewModel.paginatedSessions.collectAsState(initial = emptyList())
+    val searchQuery by viewModel.historySearchQuery.collectAsState()
+    val historyLimit by viewModel.historyLimit.collectAsState()
+
     val weeklyVolume by viewModel.weeklyVolume.collectAsState(initial = 0.0)
     val weeklySetCount by viewModel.weeklySetCount.collectAsState(initial = 0)
     val weeklySessionCount by viewModel.weeklySessionCount.collectAsState(initial = 0)
     val activeDays by viewModel.weeklyActiveDays.collectAsState(initial = List(7) { false })
     var sessionToDelete by remember { mutableStateOf<SessionWithSets?>(null) }
-    var searchQuery by remember { mutableStateOf("") }
 
-    val filteredSessions = allSessions.filter {
-        it.session.exerciseName.contains(searchQuery, ignoreCase = true)
-    }
+    var isRefreshing by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -204,9 +210,9 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
                 fontWeight = FontWeight.Bold,
                 color = White
             )
-            if (allSessions.isNotEmpty()) {
+            if (hasWorkoutsInDb) {
                 Text(
-                    text = "${filteredSessions.size} found",
+                    text = if (searchQuery.isBlank()) "${filteredSessions.size} shown" else "${filteredSessions.size} found",
                     fontSize = 12.sp,
                     color = MediumGray
                 )
@@ -215,10 +221,10 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        if (allSessions.isNotEmpty()) {
+        if (hasWorkoutsInDb) {
             OutlinedTextField(
                 value = searchQuery,
-                onValueChange = { searchQuery = it },
+                onValueChange = { viewModel.setHistorySearchQuery(it) },
                 placeholder = { Text("Search exercises...", color = MediumGray, fontSize = 14.sp) },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
@@ -235,8 +241,19 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
             Spacer(modifier = Modifier.height(12.dp))
         }
 
-        Box(modifier = Modifier.weight(1f)) {
-            if (allSessions.isEmpty()) {
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                coroutineScope.launch {
+                    kotlinx.coroutines.delay(1000)
+                    isRefreshing = false
+                }
+            },
+            modifier = Modifier.weight(1f)
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (!hasWorkoutsInDb) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -293,9 +310,25 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
                             onDelete = { sessionToDelete = sessionWithSets }
                         )
                     }
+
+                    if (filteredSessions.size >= historyLimit) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                TextButton(onClick = { viewModel.loadMoreHistory() }) {
+                                    Text("Load More", color = StravaOrange, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
     }
 
     sessionToDelete?.let { session ->
@@ -322,6 +355,15 @@ fun GpsTrackingSection(
     val isSyncing by viewModel.isSyncing.collectAsState()
     val syncMessage by viewModel.syncMessage.collectAsState()
     var activityToDelete by remember { mutableStateOf<ActivityRecord?>(null) }
+
+    var isRefreshing by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(isSyncing) {
+        if (!isSyncing) {
+            isRefreshing = false
+        }
+    }
 
     // Weekly summary aggregates
     val weeklyDistanceKm by viewModel.weeklyDistanceKm.collectAsState(initial = 0.0)
@@ -451,8 +493,16 @@ fun GpsTrackingSection(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        Box(modifier = Modifier.weight(1f)) {
-            if (allActivities.isEmpty()) {
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                viewModel.triggerCloudSync()
+            },
+            modifier = Modifier.weight(1f)
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (allActivities.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -520,6 +570,7 @@ fun GpsTrackingSection(
                 }
             }
         }
+    }
     }
 
     // Swipe-delete confirmation dialog

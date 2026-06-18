@@ -3,6 +3,7 @@ plugins {
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
   alias(libs.plugins.ksp)
+  alias(libs.plugins.dagger.hilt.android)
 }
 
 android {
@@ -29,7 +30,7 @@ android {
     buildFeatures {
       compose = true
       aidl = false
-      buildConfig = false
+      buildConfig = true
       shaders = false
     }
 
@@ -38,6 +39,10 @@ android {
         excludes += "/META-INF/{AL2.0,LGPL2.1}"
       }
     }
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 kotlin {
@@ -91,14 +96,8 @@ dependencies {
   // Material Icons
   implementation(libs.androidx.compose.material.icons.core)
 
-  // Gemini SDK
-  implementation(libs.google.generativeai)
-
   // Fused location provider for reliable GPS tracking
   implementation(libs.google.play.services.location)
-
-  // Encrypted storage for API keys
-  implementation(libs.androidx.security.crypto)
 
   // WorkManager for scheduled workout reminders
   implementation(libs.androidx.work.runtime.ktx)
@@ -117,4 +116,9 @@ dependencies {
 
   // Gson: JSON serialization for saved meals (fix #22)
   implementation("com.google.code.gson:gson:2.10.1")
+
+  // Dagger Hilt
+  implementation(libs.hilt.android)
+  ksp(libs.hilt.compiler)
+  implementation(libs.hilt.navigation.compose)
 }

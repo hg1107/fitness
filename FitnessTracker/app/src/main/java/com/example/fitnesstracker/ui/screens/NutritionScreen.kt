@@ -38,13 +38,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import com.example.fitnesstracker.data.FoodLog
 import com.example.fitnesstracker.data.SavedMeal
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import com.example.fitnesstracker.data.WeightLog
 import com.example.fitnesstracker.theme.*
 import com.example.fitnesstracker.ui.ActivityViewModel
 import com.example.fitnesstracker.ui.NutritionViewModel
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -69,7 +72,26 @@ fun NutritionScreen(
     val recommendations by viewModel.foodRecommendations.collectAsState(initial = emptyList())
     val todayCaloriesBurned by activityViewModel.todayCaloriesBurned.collectAsState(initial = 0.0)
 
-    val profile = userProfileState ?: return
+    var isRefreshing by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+
+    val profile = userProfileState
+    if (profile == null) {
+        Scaffold(
+            modifier = modifier,
+            containerColor = Black
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = Color(0xFF00E676))
+            }
+        }
+        return
+    }
 
     val goal = viewModel.calculateGoal(
         gender = profile.gender,
@@ -90,13 +112,24 @@ fun NutritionScreen(
     val consumedCarbs = foodLogs.sumOf { it.carbs * it.quantity }
     val consumedFat = foodLogs.sumOf { it.fat * it.quantity }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Black)
-            .verticalScroll(scrollState)
-            .padding(16.dp)
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = {
+            isRefreshing = true
+            coroutineScope.launch {
+                kotlinx.coroutines.delay(1000)
+                isRefreshing = false
+            }
+        },
+        modifier = modifier.fillMaxSize()
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Black)
+                .verticalScroll(scrollState)
+                .padding(16.dp)
+        ) {
         // Top Header with date navigation
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -131,9 +164,13 @@ fun NutritionScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            IconButton(onClick = { viewModel.goToPreviousDay() }, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Previous Day",
-                    tint = White, modifier = Modifier.size(20.dp))
+            IconButton(onClick = { viewModel.goToPreviousDay() }, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                    contentDescription = "Previous Day",
+                    tint = White,
+                    modifier = Modifier.size(24.dp)
+                )
             }
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -152,11 +189,14 @@ fun NutritionScreen(
             IconButton(
                 onClick = { viewModel.goToNextDay() },
                 enabled = dateOffsetDays < 0,
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(48.dp)
             ) {
-                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Next Day",
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "Next Day",
                     tint = if (dateOffsetDays < 0) White else MediumGray,
-                    modifier = Modifier.size(20.dp))
+                    modifier = Modifier.size(24.dp)
+                )
             }
         }
 
@@ -391,6 +431,7 @@ fun NutritionScreen(
         WeightLogSection(weightLogs = weightLogs, onSaveWeight = { viewModel.logWeight(it) })
         
         Spacer(modifier = Modifier.height(40.dp))
+    }
     }
 }
 

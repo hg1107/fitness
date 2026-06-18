@@ -316,7 +316,7 @@ class TrackingService : Service() {
             val lastPoint = points.last()
             
             // Calculate distance using Haversine formula
-            additionalDistance = calculateHaversine(
+            additionalDistance = com.example.fitnesstracker.util.FitnessMath.calculateHaversine(
                 lastPoint.latitude, lastPoint.longitude,
                 currentPoint.latitude, currentPoint.longitude
             )
@@ -381,16 +381,7 @@ class TrackingService : Service() {
         updateNotification()
     }
 
-    private fun calculateHaversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-        val r = 6371000.0 // Earth radius in meters
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-        val a = sin(dLat / 2) * sin(dLat / 2) +
-                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
-                sin(dLon / 2) * sin(dLon / 2)
-        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
-        return r * c
-    }
+
 
     private fun startTimer() {
         timerJob?.cancel()
@@ -416,7 +407,7 @@ class TrackingService : Service() {
                     } else {
                         _trackingState.update { state ->
                             val newElapsed = state.elapsedSeconds + 1
-                            val calories = calculateCalories(state.activityType, weightKg, newElapsed)
+                            val calories = com.example.fitnesstracker.util.FitnessMath.calculateCaloriesBurned(state.activityType, weightKg, newElapsed)
                             state.copy(
                                 elapsedSeconds = newElapsed,
                                 calories = calories
@@ -429,16 +420,7 @@ class TrackingService : Service() {
         }
     }
 
-    private fun calculateCalories(activityType: String, weight: Double, durationSec: Long): Double {
-        val met = when (activityType) {
-            "Walking" -> 3.8
-            "Running" -> 8.0
-            "Cycling" -> 7.5
-            else -> 6.0
-        }
-        val hours = durationSec / 3600.0
-        return met * weight * hours
-    }
+
 
     private fun pauseTracking() {
         _trackingState.update { it.copy(isPaused = true, currentSpeedMps = 0.0, currentPaceSecondsPerKm = 0.0) }

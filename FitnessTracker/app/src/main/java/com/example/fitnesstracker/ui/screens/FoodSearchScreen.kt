@@ -41,6 +41,7 @@ fun FoodSearchScreen(
     val searchResults by viewModel.searchResults.collectAsState(initial = emptyList())
     val recentFoods by viewModel.recentFoods.collectAsState(initial = emptyList())
     val savedMeals by viewModel.allSavedMeals.collectAsState(initial = emptyList())
+    val foodLimit by viewModel.foodLimit.collectAsState()
 
     var foodToLog by remember { mutableStateOf<FoodItem?>(null) }
     var quantityInput by remember { mutableStateOf("100") }
@@ -164,6 +165,20 @@ fun FoodSearchScreen(
                                             }
                                         }
                                     )
+                                }
+                                if (searchResults.size >= foodLimit) {
+                                    item {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 12.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            TextButton(onClick = { viewModel.loadMoreFood() }) {
+                                                Text("Load More", color = White, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

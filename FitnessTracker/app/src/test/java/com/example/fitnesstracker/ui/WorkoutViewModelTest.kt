@@ -6,6 +6,7 @@ import com.example.fitnesstracker.data.WorkoutDao
 import com.example.fitnesstracker.data.WorkoutSession
 import com.example.fitnesstracker.data.WorkoutSet
 import com.example.fitnesstracker.data.UserProfile
+import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -33,7 +34,7 @@ class WorkoutViewModelTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         fakeDao = FakeWorkoutDao()
-        viewModel = WorkoutViewModel(fakeDao)
+        viewModel = WorkoutViewModel(fakeDao, savedStateHandle = SavedStateHandle())
     }
 
     @After
@@ -148,6 +149,22 @@ class WorkoutViewModelTest {
 class FakeWorkoutDao : WorkoutDao {
     val plannedExercises = mutableListOf<PlannedExercise>()
     val sessions = mutableListOf<SessionWithSets>()
+
+    override fun getSessionsWithSetsLimit(limit: Int): Flow<List<SessionWithSets>> = flow {
+        emit(sessions.reversed().take(limit))
+    }
+
+    override fun getSessionsWithSetsSearchLimit(query: String, limit: Int): Flow<List<SessionWithSets>> = flow {
+        emit(sessions.filter { it.session.exerciseName.contains(query, ignoreCase = true) }.reversed().take(limit))
+    }
+
+    override fun getSessionsWithSetsSince(since: Long): Flow<List<SessionWithSets>> = flow {
+        emit(sessions.filter { it.session.timestamp >= since }.reversed())
+    }
+
+    override fun getAllSessionTimestamps(): Flow<List<Long>> = flow {
+        emit(sessions.map { it.session.timestamp }.reversed())
+    }
 
     override fun getPlannedExercisesForDay(dayOfWeek: Int): Flow<List<PlannedExercise>> = flow {
         emit(plannedExercises.filter { it.dayOfWeek == dayOfWeek })
