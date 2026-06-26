@@ -8,11 +8,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import com.example.fitnesstracker.service.WeeklySummaryWorker
+import com.example.fitnesstracker.service.WorkoutReminderWorker
 import com.example.fitnesstracker.theme.FitnessTrackerTheme
+import dagger.hilt.android.AndroidEntryPoint
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+
+    // Schedule the daily workout reminder and weekly recap (no-ops if already scheduled)
+    WorkoutReminderWorker.schedule(applicationContext)
+    WeeklySummaryWorker.schedule(applicationContext)
 
     enableEdgeToEdge()
     setContent {

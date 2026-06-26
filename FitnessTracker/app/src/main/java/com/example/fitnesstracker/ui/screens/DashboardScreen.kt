@@ -30,12 +30,18 @@ import com.example.fitnesstracker.theme.BorderGray
 import com.example.fitnesstracker.theme.CardGray
 import com.example.fitnesstracker.theme.LightGray
 import com.example.fitnesstracker.theme.MediumGray
+import kotlinx.coroutines.launch
 import com.example.fitnesstracker.theme.White
 import com.example.fitnesstracker.ui.WorkoutViewModel
+import com.example.fitnesstracker.ui.ActivityViewModel
+import com.example.fitnesstracker.ui.components.ProgressChartView
+import com.example.fitnesstracker.theme.StravaOrange
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 
 @Composable
 fun DashboardScreen(
     viewModel: WorkoutViewModel,
+    activityViewModel: ActivityViewModel,
     onLogExercise: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -48,6 +54,13 @@ fun DashboardScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var exerciseToDelete by remember { mutableStateOf<PlannedExercise?>(null) }
     val today = WorkoutViewModel.getCurrentDayOfWeek()
+
+    // Use the pre-computed StateFlow from ViewModel — no computation in the Composable
+    val volumeTrendPoints by viewModel.volumeTrendPoints.collectAsState()
+    val coachTip by viewModel.coachTip.collectAsState()
+
+    var isRefreshing by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     Column(
         modifier = modifier
@@ -102,6 +115,38 @@ fun DashboardScreen(
             }
         }
 
+        // AI Coach Tip
+        coachTip?.let { tip ->
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF0D253F))
+                    .border(1.dp, Color(0xFF00E676).copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("💡", fontSize = 18.sp)
+                Column {
+                    Text(
+                        text = "AI Coach Tip",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF00E676)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = tip,
+                        fontSize = 12.sp,
+                        color = LightGray,
+                        lineHeight = 15.sp
+                    )
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(20.dp))
 
         // Weekday selector: Mon (1) to Sun (7)
@@ -112,90 +157,127 @@ fun DashboardScreen(
             onDaySelected = { viewModel.selectDay(it) }
         )
 
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = getDayName(selectedDay),
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = LightGray
-            )
-            if (selectedDay == today) {
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = White
-                ) {
-                    Text(
-                        text = "TODAY",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Black,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
-                }
-            }
-        }
-
         Spacer(modifier = Modifier.height(12.dp))
 
-        Box(modifier = Modifier.weight(1f)) {
-            if (exercises.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "Rest day",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = LightGray
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Tap '+' to add exercises for ${getDayShort(selectedDay)}",
-                            fontSize = 14.sp,
-                            color = MediumGray,
-                            textAlign = TextAlign.Center
-                        )
-                    }
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                coroutineScope.launch {
+                    activityViewModel.triggerCloudSync()
+                    isRefreshing = false
                 }
-            } else {
+            },
+            modifier = Modifier.weight(1f)
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(bottom = 80.dp)
+                    contentPadding = PaddingValues(bottom = 80.dp),
+                    modifier = Modifier.fillMaxSize()
                 ) {
-                    items(exercises) { exercise ->
-                        ExercisePlanCard(
-                            exercise = exercise,
-                            isLoggedToday = todayLoggedExerciseNames.any {
-                                it.equals(exercise.exerciseName, ignoreCase = true)
-                            },
-                            onLog = { onLogExercise(exercise.exerciseName) },
-                            onDelete = { exerciseToDelete = exercise }
-                        )
+                    if (volumeTrendPoints.isNotEmpty()) {
+                        item {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Strength Volume Trend",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = White
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            ProgressChartView(
+                                points = volumeTrendPoints,
+                                valueSuffix = if (viewModel.isImperial.value) "lbs" else "kg",
+                                lineColor = StravaOrange,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+                    }
+
+                    item {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = getDayName(selectedDay),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = LightGray
+                            )
+                            if (selectedDay == today) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = White
+                                ) {
+                                    Text(
+                                        text = "TODAY",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Black,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (exercises.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(200.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "Rest day",
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = LightGray
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Tap '+' to add exercises for ${getDayShort(selectedDay)}",
+                                        fontSize = 13.sp,
+                                        color = MediumGray,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        items(exercises) { exercise ->
+                            ExercisePlanCard(
+                                exercise = exercise,
+                                isLoggedToday = todayLoggedExerciseNames.any {
+                                    it.equals(exercise.exerciseName, ignoreCase = true)
+                                },
+                                onLog = { onLogExercise(exercise.exerciseName) },
+                                onDelete = { exerciseToDelete = exercise }
+                            )
+                        }
                     }
                 }
-            }
 
-            // Minimalist floating add button inside the screen
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(bottom = 16.dp, end = 8.dp)
-            ) {
-                FloatingActionButton(
-                    onClick = { showAddDialog = true },
-                    containerColor = White,
-                    contentColor = Black,
-                    shape = CircleShape,
-                    modifier = Modifier.size(56.dp)
+                // Floating Action Button
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 88.dp, end = 8.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.Add, contentDescription = "Add Exercise")
+                    FloatingActionButton(
+                        onClick = { showAddDialog = true },
+                        containerColor = White,
+                        contentColor = Black,
+                        shape = CircleShape,
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Add, contentDescription = "Add Exercise")
+                    }
                 }
             }
         }

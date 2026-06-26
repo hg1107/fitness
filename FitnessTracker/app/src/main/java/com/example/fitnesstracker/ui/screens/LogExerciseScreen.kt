@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -107,7 +108,7 @@ fun LogExerciseScreen(
                 val r = RingtoneManager.getRingtone(context, notificationUri)
                 r.play()
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.fitnesstracker.util.AppLogger.e("LogExerciseScreen", "Ringtone playback failed", e)
             }
             delay(300)
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -144,6 +145,32 @@ fun LogExerciseScreen(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
                             tint = White
+                        )
+                    }
+                },
+                actions = {
+                    var showExerciseInfo by remember { mutableStateOf(false) }
+                    var showPlateCalculator by remember { mutableStateOf(false) }
+                    IconButton(onClick = { showPlateCalculator = true }) {
+                        Text("\uD83C\uDFCB\uFE0F", fontSize = 17.sp)
+                    }
+                    IconButton(onClick = { showExerciseInfo = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "Exercise info",
+                            tint = MediumGray
+                        )
+                    }
+                    if (showExerciseInfo) {
+                        ExerciseInfoDialog(
+                            exerciseName = exerciseName,
+                            onDismiss = { showExerciseInfo = false }
+                        )
+                    }
+                    if (showPlateCalculator) {
+                        PlateCalculatorDialog(
+                            isImperial = isImperial,
+                            onDismiss = { showPlateCalculator = false }
                         )
                     }
                 },

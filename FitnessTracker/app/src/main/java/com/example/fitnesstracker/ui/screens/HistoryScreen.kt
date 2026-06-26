@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +51,10 @@ import androidx.compose.foundation.verticalScroll
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.fitnesstracker.util.formatDuration
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import com.example.fitnesstracker.theme.StravaOrange
 
 @Composable
 fun HistoryScreen(
@@ -88,7 +93,7 @@ fun HistoryScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // 3-Way Segmented Tab Control
+        // Fix #7/#14: Use consistent StravaOrange indicator for all three tabs
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -97,60 +102,32 @@ fun HistoryScreen(
                 .border(1.dp, BorderGray, RoundedCornerShape(8.dp))
                 .padding(3.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (selectedTab == 0) White else Color.Transparent)
-                    .clickable { selectedTab = 0 }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Workouts",
-                    color = if (selectedTab == 0) Black else LightGray,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (selectedTab == 1) StravaOrange else Color.Transparent)
-                    .clickable { selectedTab = 1 }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Activities",
-                    color = if (selectedTab == 1) DarkBackground else LightGray,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (selectedTab == 2) White else Color.Transparent)
-                    .clickable { selectedTab = 2 }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Analysis",
-                    color = if (selectedTab == 2) Black else LightGray,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
+            listOf("Workouts", "Activities", "Analysis").forEachIndexed { index, label ->
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (selectedTab == index) StravaOrange else Color.Transparent)
+                        .clickable(
+                            onClickLabel = "Select $label tab"
+                        ) { selectedTab = index }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        color = if (selectedTab == index) DarkBackground else LightGray,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
         when (selectedTab) {
-            0 -> GymLogsSection(workoutViewModel, isImperial)
+            0 -> GymLogsSection(workoutViewModel, activityViewModel, isImperial)
             1 -> GpsTrackingSection(activityViewModel, isImperial, onViewActivityDetail)
             2 -> WeeklyAnalysisSection(workoutViewModel, activityViewModel, nutritionViewModel, isImperial)
         }
@@ -158,18 +135,21 @@ fun HistoryScreen(
 }
 
 @Composable
-fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
-    val allSessions by viewModel.allSessions.collectAsState(initial = emptyList())
+fun GymLogsSection(viewModel: WorkoutViewModel, activityViewModel: ActivityViewModel, isImperial: Boolean) {
+    val hasWorkoutsInDb by viewModel.hasWorkoutsInDb.collectAsState(initial = false)
+    val filteredSessions by viewModel.paginatedSessions.collectAsState(initial = emptyList())
+    val searchQuery by viewModel.historySearchQuery.collectAsState()
+    val historyLimit by viewModel.historyLimit.collectAsState()
+
     val weeklyVolume by viewModel.weeklyVolume.collectAsState(initial = 0.0)
     val weeklySetCount by viewModel.weeklySetCount.collectAsState(initial = 0)
     val weeklySessionCount by viewModel.weeklySessionCount.collectAsState(initial = 0)
     val activeDays by viewModel.weeklyActiveDays.collectAsState(initial = List(7) { false })
+    val personalBestMap by viewModel.personalBestMap.collectAsState()
     var sessionToDelete by remember { mutableStateOf<SessionWithSets?>(null) }
-    var searchQuery by remember { mutableStateOf("") }
 
-    val filteredSessions = allSessions.filter {
-        it.session.exerciseName.contains(searchQuery, ignoreCase = true)
-    }
+    var isRefreshing by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -233,9 +213,9 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
                 fontWeight = FontWeight.Bold,
                 color = White
             )
-            if (allSessions.isNotEmpty()) {
+            if (hasWorkoutsInDb) {
                 Text(
-                    text = "${filteredSessions.size} found",
+                    text = if (searchQuery.isBlank()) "${filteredSessions.size} shown" else "${filteredSessions.size} found",
                     fontSize = 12.sp,
                     color = MediumGray
                 )
@@ -244,10 +224,10 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        if (allSessions.isNotEmpty()) {
+        if (hasWorkoutsInDb) {
             OutlinedTextField(
                 value = searchQuery,
-                onValueChange = { searchQuery = it },
+                onValueChange = { viewModel.setHistorySearchQuery(it) },
                 placeholder = { Text("Search exercises...", color = MediumGray, fontSize = 14.sp) },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
@@ -264,8 +244,19 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
             Spacer(modifier = Modifier.height(12.dp))
         }
 
-        Box(modifier = Modifier.weight(1f)) {
-            if (allSessions.isEmpty()) {
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                coroutineScope.launch {
+                    activityViewModel.triggerCloudSync()
+                    isRefreshing = false
+                }
+            },
+            modifier = Modifier.weight(1f)
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (!hasWorkoutsInDb) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -315,16 +306,30 @@ fun GymLogsSection(viewModel: WorkoutViewModel, isImperial: Boolean) {
                     items(filteredSessions, key = { it.session.id }) { sessionWithSets ->
                         ExpandableHistoryRow(
                             sessionWithSets = sessionWithSets,
-                            allSessionsForExercise = filteredSessions.filter {
-                                it.session.exerciseName == sessionWithSets.session.exerciseName
-                            },
+                            hasPersonalBest = personalBestMap[sessionWithSets.session.id] ?: false,
                             isImperial = isImperial,
                             onDelete = { sessionToDelete = sessionWithSets }
                         )
                     }
+
+                    if (filteredSessions.size >= historyLimit) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                TextButton(onClick = { viewModel.loadMoreHistory() }) {
+                                    Text("Load More", color = StravaOrange, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
     }
 
     sessionToDelete?.let { session ->
@@ -351,6 +356,15 @@ fun GpsTrackingSection(
     val isSyncing by viewModel.isSyncing.collectAsState()
     val syncMessage by viewModel.syncMessage.collectAsState()
     var activityToDelete by remember { mutableStateOf<ActivityRecord?>(null) }
+
+    var isRefreshing by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(isSyncing) {
+        if (!isSyncing) {
+            isRefreshing = false
+        }
+    }
 
     // Weekly summary aggregates
     val weeklyDistanceKm by viewModel.weeklyDistanceKm.collectAsState(initial = 0.0)
@@ -480,8 +494,16 @@ fun GpsTrackingSection(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        Box(modifier = Modifier.weight(1f)) {
-            if (allActivities.isEmpty()) {
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                viewModel.triggerCloudSync()
+            },
+            modifier = Modifier.weight(1f)
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (allActivities.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -549,6 +571,7 @@ fun GpsTrackingSection(
                 }
             }
         }
+    }
     }
 
     // Swipe-delete confirmation dialog
@@ -678,7 +701,7 @@ fun ActivityRowItem(
 @Composable
 fun ExpandableHistoryRow(
     sessionWithSets: SessionWithSets,
-    allSessionsForExercise: List<SessionWithSets>,
+    hasPersonalBest: Boolean,
     isImperial: Boolean,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
@@ -697,13 +720,6 @@ fun ExpandableHistoryRow(
     val formattedVolume = displayVolume.let {
         if (it % 1.0 == 0.0) "${it.toInt()}$volumeUnit" else String.format(java.util.Locale.US, "%.1f%s", it, volumeUnit)
     }
-    // PR: this session holds the single highest-weight set ever done for this exercise
-    val thisSessionMaxWeight = sessionWithSets.sets.maxOfOrNull { it.weight } ?: 0.0
-    val hasPersonalBest = thisSessionMaxWeight > 0.0 && allSessionsForExercise
-        .filter { it.session.id != sessionWithSets.session.id }
-        .flatMap { it.sets }
-        .maxOfOrNull { it.weight }
-        ?.let { thisSessionMaxWeight > it } ?: true
 
 
     val chevronRotation by animateFloatAsState(
@@ -721,7 +737,9 @@ fun ExpandableHistoryRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .clickable(
+                    onClickLabel = if (expanded) "Collapse session details" else "Expand session details"
+                ) { expanded = !expanded }
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -1064,7 +1082,11 @@ fun WeeklyAnalysisSection(
         weightKg = profile.weightKg,
         heightCm = profile.heightCm,
         activityLevel = profile.activityLevel,
-        fitnessGoal = profile.fitnessGoal
+        fitnessGoal = profile.fitnessGoal,
+        customCalories = profile.customCalories,
+        customProtein = profile.customProtein,
+        customCarbs = profile.customCarbs,
+        customFat = profile.customFat
     )
 
     // Compute averages

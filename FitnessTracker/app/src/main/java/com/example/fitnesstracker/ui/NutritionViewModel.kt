@@ -1,17 +1,25 @@
 package com.example.fitnesstracker.ui
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.CreationExtras
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.example.fitnesstracker.data.*
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
-import com.google.ai.client.generativeai.GenerativeModel
-
+import com.example.fitnesstracker.util.InputValidation
+import com.example.fitnesstracker.util.GeminiNutritionParser
+import com.example.fitnesstracker.util.ParsedFoodItem
 
 data class NutritionGoal(
     val calories: Double,
@@ -36,25 +44,32 @@ data class RecommendedFoodItem(
     val reason: String
 )
 
+sealed class AiParsingState {
+    object Idle : AiParsingState()
+    object Loading : AiParsingState()
+    data class Success(val items: List<ParsedFoodItem>) : AiParsingState()
+    data class Error(val message: String) : AiParsingState()
+}
+
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
-class NutritionViewModel(
+@HiltViewModel
+class NutritionViewModel @Inject constructor(
     private val nutritionDao: NutritionDao,
-    private val activityDao: ActivityDao
+    private val activityDao: ActivityDao,
+    private val bodyMeasurementDao: BodyMeasurementDao,
+    private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
-    private val _currentDate = MutableStateFlow(getCurrentDateString())
-    val currentDate: StateFlow<String> = _currentDate.asStateFlow()
+    private val _currentDate = savedStateHandle.getStateFlow("current_date", getCurrentDateString())
+    val currentDate: StateFlow<String> = _currentDate
 
     // Date offset in days from today (0 = today, -1 = yesterday, etc.)
-    private val _dateOffsetDays = MutableStateFlow(0)
-    val dateOffsetDays: StateFlow<Int> = _dateOffsetDays.asStateFlow()
+    private val _dateOffsetDays = savedStateHandle.getStateFlow("date_offset_days", 0)
+    val dateOffsetDays: StateFlow<Int> = _dateOffsetDays
 
     val userProfile: Flow<UserProfile?> = activityDao.getUserProfile()
 
-    val coachMessages: Flow<List<CoachMessage>> = nutritionDao.getAllCoachMessages()
 
-    private val _isCoachThinking = MutableStateFlow(false)
-    val isCoachThinking: StateFlow<Boolean> = _isCoachThinking.asStateFlow()
 
     // Today's food logs
     val todayFoodLogs: Flow<List<FoodLog>> = _currentDate.flatMapLatest { date ->
@@ -69,26 +84,26 @@ class NutritionViewModel(
     // All weight logs
     val allWeightLogs: Flow<List<WeightLog>> = nutritionDao.getAllWeightLogs()
 
-    // Weekly food logs (last 7 days)
-    val weeklyFoodLogs: Flow<List<FoodLog>> = nutritionDao.getAllFoodLogs().map { logs ->
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val last7Days = (0..6).map { i ->
-            val cal = Calendar.getInstance()
-            cal.add(Calendar.DAY_OF_YEAR, -i)
-            sdf.format(cal.time)
-        }.toSet()
-        logs.filter { it.date in last7Days }
+    // Ticker flow emitting the date string 6 days ago, recomputed every 60 seconds
+    private val nutritionDaysAgoFlow: Flow<String> = kotlinx.coroutines.flow.flow {
+        while (true) {
+            emit(getDateStringDaysAgo(6))
+            kotlinx.coroutines.delay(60_000)
+        }
+    }.distinctUntilChanged()
+
+    // Weekly food logs (last 7 days) — SQL-level date filter, recomputes when date or day boundaries change
+    val weeklyFoodLogs: Flow<List<FoodLog>> = combine(_currentDate, nutritionDaysAgoFlow) { _, since ->
+        since
+    }.flatMapLatest { since ->
+        nutritionDao.getFoodLogsSince(since)
     }
 
-    // Weekly water logs (last 7 days)
-    val weeklyWaterLogs: Flow<List<WaterLog>> = nutritionDao.getAllWaterLogs().map { logs ->
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val last7Days = (0..6).map { i ->
-            val cal = Calendar.getInstance()
-            cal.add(Calendar.DAY_OF_YEAR, -i)
-            sdf.format(cal.time)
-        }.toSet()
-        logs.filter { it.date in last7Days }
+    // Weekly water logs (last 7 days) — SQL-level date filter, recomputes when date or day boundaries change
+    val weeklyWaterLogs: Flow<List<WaterLog>> = combine(_currentDate, nutritionDaysAgoFlow) { _, since ->
+        since
+    }.flatMapLatest { since ->
+        nutritionDao.getWaterLogsSince(since)
     }
 
     // Saved meals
@@ -98,26 +113,34 @@ class NutritionViewModel(
     val recentFoods: Flow<List<String>> = nutritionDao.getRecentFoods()
 
     // Search results state
-    private val _searchQuery = MutableStateFlow("")
-    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+    private val _searchQuery = savedStateHandle.getStateFlow("search_query", "")
+    val searchQuery: StateFlow<String> = _searchQuery
 
-    val searchResults: Flow<List<FoodItem>> = _searchQuery
-        .debounce(300)
-        .flatMapLatest { query ->
-            if (query.isBlank()) {
-                nutritionDao.getAllFoodItems()
-            } else {
-                nutritionDao.searchFoodItems(query)
-            }
+    private val _foodLimit = savedStateHandle.getStateFlow("food_limit", 50)
+    val foodLimit: StateFlow<Int> = _foodLimit
+
+    val searchResults: Flow<List<FoodItem>> = combine(
+        _searchQuery,
+        _foodLimit
+    ) { query, limit ->
+        query to limit
+    }.debounce(300)
+    .flatMapLatest { (query, limit) ->
+        if (query.isBlank()) {
+            nutritionDao.getAllFoodItemsLimit(limit)
+        } else {
+            nutritionDao.searchFoodItemsLimit(query, limit)
         }
+    }
 
     // AI Entry Parsed state
     private val _parsedAIEntry = MutableStateFlow<List<ParsedFoodLogItem>>(emptyList())
     val parsedAIEntry: StateFlow<List<ParsedFoodLogItem>> = _parsedAIEntry.asStateFlow()
 
-    // Recommendations state
-    val foodRecommendations: Flow<List<RecommendedFoodItem>> = combine(
-        nutritionDao.getAllFoodItems(),
+    // Recommendations: O(n) scoring offloaded to Dispatchers.Default, cached as StateFlow.
+    // distinctUntilChanged on food items prevents re-scoring on every unrelated log change.
+    val foodRecommendations: StateFlow<List<RecommendedFoodItem>> = combine(
+        nutritionDao.getAllFoodItems().distinctUntilChanged(),
         userProfile,
         todayFoodLogs
     ) { allFoods, profile, logs ->
@@ -129,7 +152,11 @@ class NutritionViewModel(
             weightKg = profile.weightKg,
             heightCm = profile.heightCm,
             activityLevel = profile.activityLevel,
-            fitnessGoal = profile.fitnessGoal
+            fitnessGoal = profile.fitnessGoal,
+            customCalories = profile.customCalories,
+            customProtein = profile.customProtein,
+            customCarbs = profile.customCarbs,
+            customFat = profile.customFat
         )
 
         val consumedCalories = logs.sumOf { it.calories * it.quantity }
@@ -151,13 +178,19 @@ class NutritionViewModel(
             remainingFat = remainingFat
         )
     }
+    .flowOn(kotlinx.coroutines.Dispatchers.Default)  // keep O(n) scoring off the main thread
+    .stateIn(
+        scope = viewModelScope,
+        started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList()
+    )
 
     init {
         seedFoodDatabaseIfEmpty()
     }
 
     fun selectDate(date: String) {
-        _currentDate.value = date
+        savedStateHandle["current_date"] = date
     }
 
     fun goToPreviousDay() {
@@ -165,8 +198,9 @@ class NutritionViewModel(
         val cal = Calendar.getInstance()
         cal.time = sdf.parse(_currentDate.value) ?: cal.time
         cal.add(Calendar.DAY_OF_YEAR, -1)
-        _currentDate.value = sdf.format(cal.time)
-        _dateOffsetDays.value--
+        val newDate = sdf.format(cal.time)
+        savedStateHandle["current_date"] = newDate
+        savedStateHandle["date_offset_days"] = (savedStateHandle.get<Int>("date_offset_days") ?: 0) - 1
     }
 
     fun goToNextDay() {
@@ -176,19 +210,33 @@ class NutritionViewModel(
         val cal = Calendar.getInstance()
         cal.time = sdf.parse(_currentDate.value) ?: cal.time
         cal.add(Calendar.DAY_OF_YEAR, 1)
-        _currentDate.value = sdf.format(cal.time)
-        _dateOffsetDays.value++
+        val newDate = sdf.format(cal.time)
+        savedStateHandle["current_date"] = newDate
+        savedStateHandle["date_offset_days"] = (savedStateHandle.get<Int>("date_offset_days") ?: 0) + 1
     }
 
     fun goToToday() {
-        _currentDate.value = getCurrentDateString()
-        _dateOffsetDays.value = 0
+        savedStateHandle["current_date"] = getCurrentDateString()
+        savedStateHandle["date_offset_days"] = 0
     }
 
     fun isViewingToday(): Boolean = _currentDate.value == getCurrentDateString()
 
     fun updateSearchQuery(query: String) {
-        _searchQuery.value = query
+        savedStateHandle["search_query"] = query
+        savedStateHandle["food_limit"] = 50
+    }
+
+    fun loadMoreFood() {
+        savedStateHandle["food_limit"] = _foodLimit.value + 50
+    }
+
+    // Insert a product fetched via barcode scan and surface it in search results
+    fun addScannedFood(item: FoodItem) {
+        viewModelScope.launch {
+            nutritionDao.insertFoodItem(item)
+            savedStateHandle["search_query"] = item.name
+        }
     }
 
     fun clearParsedAIEntry() {
@@ -207,26 +255,28 @@ class NutritionViewModel(
         dietaryPreference: String,
         foodLikes: String,
         foodDislikes: String,
-        foodAllergies: String
+        foodAllergies: String,
+        preferredUnits: String = "Metric"
     ) {
         viewModelScope.launch {
             val profile = UserProfile(
                 id = "default_user",
-                name = name,
-                age = age,
+                name = InputValidation.sanitizeName(name, 100).ifEmpty { "Athlete" },
+                age = age.coerceIn(5, 120),
                 gender = gender,
-                weightKg = weightKg,
-                heightCm = heightCm,
+                weightKg = weightKg.coerceIn(10.0, 300.0),
+                heightCm = heightCm.coerceIn(50.0, 250.0),
                 fitnessGoal = fitnessGoal,
                 activityLevel = activityLevel,
                 dietaryPreference = dietaryPreference,
                 onboardingComplete = true,
-                foodLikes = foodLikes,
-                foodDislikes = foodDislikes,
-                foodAllergies = foodAllergies
+                preferredUnits = preferredUnits,
+                foodLikes = InputValidation.sanitizeCommaList(foodLikes, 300),
+                foodDislikes = InputValidation.sanitizeCommaList(foodDislikes, 300),
+                foodAllergies = InputValidation.sanitizeCommaList(foodAllergies, 300)
             )
             activityDao.insertUserProfile(profile)
-            
+
             // Also log initial weight log
             nutritionDao.insertWeightLog(
                 WeightLog(
@@ -318,6 +368,37 @@ class NutritionViewModel(
         }
     }
 
+    // --- Body Composition Tracking ---
+    val bodyMeasurements: Flow<List<BodyMeasurement>> = bodyMeasurementDao.getAllBodyMeasurements()
+
+    fun logBodyMeasurement(
+        chest: Double?,
+        waist: Double?,
+        hips: Double?,
+        arms: Double?,
+        thighs: Double?,
+        date: String = _currentDate.value
+    ) {
+        viewModelScope.launch {
+            bodyMeasurementDao.insertBodyMeasurement(
+                BodyMeasurement(
+                    date = date,
+                    chestCm = chest,
+                    waistCm = waist,
+                    hipsCm = hips,
+                    armsCm = arms,
+                    thighsCm = thighs
+                )
+            )
+        }
+    }
+
+    fun deleteBodyMeasurement(measurement: BodyMeasurement) {
+        viewModelScope.launch {
+            bodyMeasurementDao.deleteBodyMeasurement(measurement)
+        }
+    }
+
     // Full profile update (used by ProfileScreen)
     fun updateUserProfile(
         name: String,
@@ -332,25 +413,33 @@ class NutritionViewModel(
         foodLikes: String,
         foodDislikes: String,
         foodAllergies: String,
-        waterTargetMl: Int
+        waterTargetMl: Int,
+        customCalories: Double? = null,
+        customProtein: Double? = null,
+        customCarbs: Double? = null,
+        customFat: Double? = null
     ) {
         viewModelScope.launch {
             val current = activityDao.getUserProfileSync() ?: UserProfile()
             activityDao.insertUserProfile(
                 current.copy(
-                    name = name.trim().ifEmpty { "Athlete" },
-                    age = age,
+                    name = InputValidation.sanitizeName(name, 100).ifEmpty { "Athlete" },
+                    age = age.coerceIn(5, 120),
                     gender = gender,
-                    weightKg = weightKg,
-                    heightCm = heightCm,
+                    weightKg = weightKg.coerceIn(10.0, 300.0),
+                    heightCm = heightCm.coerceIn(50.0, 250.0),
                     fitnessGoal = fitnessGoal,
                     activityLevel = activityLevel,
                     dietaryPreference = dietaryPreference,
                     preferredUnits = preferredUnits,
-                    foodLikes = foodLikes,
-                    foodDislikes = foodDislikes,
-                    foodAllergies = foodAllergies,
-                    waterTargetMl = waterTargetMl
+                    foodLikes = InputValidation.sanitizeCommaList(foodLikes, 300),
+                    foodDislikes = InputValidation.sanitizeCommaList(foodDislikes, 300),
+                    foodAllergies = InputValidation.sanitizeCommaList(foodAllergies, 300),
+                    waterTargetMl = waterTargetMl.coerceIn(500, 10_000),
+                    customCalories = customCalories,
+                    customProtein = customProtein,
+                    customCarbs = customCarbs,
+                    customFat = customFat
                 )
             )
         }
@@ -405,9 +494,11 @@ class NutritionViewModel(
 
     // Offline heuristic-based AI text entry parser
     fun parseTextEntry(text: String) {
+        // Truncate input to avoid DoS/Regex processing overhead from massive texts
+        val safeText = text.take(300)
         viewModelScope.launch {
             val parsed = mutableListOf<ParsedFoodLogItem>()
-            val segments = text.split(Regex(",|\\band\\b|\\+"), 0)
+            val segments = safeText.split(Regex(",|\\band\\b|\\+"), 0)
 
             for (segment in segments) {
                 val trimmed = segment.trim()
@@ -433,9 +524,12 @@ class NutritionViewModel(
                     Regex("\\b(of|bowl|glass|cup|plate|piece|pieces|serving|servings|g|ml|scoop|scoops|tbsp|tsp)\\b", RegexOption.IGNORE_CASE),
                     ""
                 ).trim()
+
+                // Sanitize input: retain only alphanumeric characters and spaces
+                foodQuery = foodQuery.replace(Regex("[^a-zA-Z0-9\\s]"), "").replace(Regex("\\s+"), " ").trim()
                 
                 if (foodQuery.isEmpty()) {
-                    foodQuery = trimmed
+                    continue // skip empty search queries
                 }
 
                 // Match in DB
@@ -553,7 +647,11 @@ class NutritionViewModel(
         weightKg: Double,
         heightCm: Double,
         activityLevel: String,
-        fitnessGoal: String
+        fitnessGoal: String,
+        customCalories: Double? = null,
+        customProtein: Double? = null,
+        customCarbs: Double? = null,
+        customFat: Double? = null
     ): NutritionGoal {
         val bmr = if (gender.equals("Male", ignoreCase = true)) {
             10 * weightKg + 6.25 * heightCm - 5 * age + 5
@@ -585,10 +683,10 @@ class NutritionViewModel(
         val carbs = (calories - (protein * 4) - (fat * 9)) / 4.0
 
         return NutritionGoal(
-            calories = calories.coerceAtLeast(1200.0),
-            protein = protein.coerceAtLeast(40.0),
-            carbs = carbs.coerceAtLeast(50.0),
-            fat = fat.coerceAtLeast(30.0)
+            calories = customCalories ?: calories.coerceAtLeast(1200.0),
+            protein = customProtein ?: protein.coerceAtLeast(40.0),
+            carbs = customCarbs ?: carbs.coerceAtLeast(50.0),
+            fat = customFat ?: fat.coerceAtLeast(30.0)
         )
     }
 
@@ -695,420 +793,91 @@ class NutritionViewModel(
         return sdf.format(Date())
     }
 
-    // Manual quick serialization/deserialization for food logs list in saved meals
+    // Fix #19: Helper to compute a date string N days ago for SQL WHERE clauses
+    private fun getDateStringDaysAgo(days: Int): String {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.DAY_OF_YEAR, -days)
+        return sdf.format(cal.time)
+    }
+
+    // Fix #22: Use Gson for saved-meal serialization instead of fragile pipe/semicolon format
+    private val gson = Gson()
+
     private fun serializeLogsToJson(logs: List<FoodLog>): String {
-        // Since we don't have Gson/Moshi in imports, we can construct simple CSV/JSON or string serialization.
-        // String format: foodName|calories|protein|carbs|fat|fiber|quantity|servingUnit;foodName|...
-        return logs.joinToString(";") {
-            "${it.foodName}|${it.calories}|${it.protein}|${it.carbs}|${it.fat}|${it.fiber}|${it.quantity}|${it.servingUnit}"
-        }
+        return gson.toJson(logs)
     }
 
     private fun deserializeJsonToLogs(serialized: String): List<FoodLog> {
         if (serialized.isBlank()) return emptyList()
         return try {
-            serialized.split(";").map { item ->
-                val parts = item.split("|")
-                FoodLog(
-                    date = "",
-                    mealType = "",
-                    foodName = parts[0],
-                    calories = parts[1].toDouble(),
-                    protein = parts[2].toDouble(),
-                    carbs = parts[3].toDouble(),
-                    fat = parts[4].toDouble(),
-                    fiber = parts[5].toDouble(),
-                    quantity = parts[6].toDouble(),
-                    servingUnit = parts[7]
-                )
+            // Support both new Gson format and old pipe/semicolon format for backwards compatibility
+            if (serialized.trimStart().startsWith("[")) {
+                val type = object : TypeToken<List<FoodLog>>() {}.type
+                gson.fromJson(serialized, type) ?: emptyList()
+            } else {
+                // Legacy pipe/semicolon format — migrate on read
+                serialized.split(";").map { item ->
+                    val parts = item.split("|")
+                    FoodLog(
+                        date = "",
+                        mealType = "",
+                        foodName = parts[0],
+                        calories = parts[1].toDouble(),
+                        protein = parts[2].toDouble(),
+                        carbs = parts[3].toDouble(),
+                        fat = parts[4].toDouble(),
+                        fiber = parts[5].toDouble(),
+                        quantity = parts[6].toDouble(),
+                        servingUnit = parts[7]
+                    )
+                }
             }
         } catch (e: Exception) {
             emptyList()
         }
     }
 
-    fun saveCoachSettings(
-        budget: String,
-        region: String,
-        preferredCuisine: String,
-        mealTimings: String,
-        gymSchedule: String,
-        availableFoodsAtHome: String,
-        geminiApiKey: String
-    ) {
-        viewModelScope.launch {
-            val currentProfile = activityDao.getUserProfileSync() ?: UserProfile()
-            val updatedProfile = currentProfile.copy(
-                budget = budget,
-                region = region,
-                preferredCuisine = preferredCuisine,
-                mealTimings = mealTimings,
-                gymSchedule = gymSchedule,
-                availableFoodsAtHome = availableFoodsAtHome,
-                geminiApiKey = geminiApiKey
-            )
-            activityDao.insertUserProfile(updatedProfile)
-        }
-    }
+    private val _aiParsingState = MutableStateFlow<AiParsingState>(AiParsingState.Idle)
+    val aiParsingState: StateFlow<AiParsingState> = _aiParsingState.asStateFlow()
 
-    fun clearChat() {
+    fun parseWithGemini(text: String, mealType: String) {
+        if (text.isBlank()) return
         viewModelScope.launch {
-            nutritionDao.clearAllCoachMessages()
-        }
-    }
-
-    fun sendMessage(messageText: String) {
-        if (messageText.isBlank()) return
-        viewModelScope.launch {
-            val userMessage = CoachMessage(
-                timestamp = System.currentTimeMillis(),
-                sender = "user",
-                text = messageText
-            )
-            nutritionDao.insertCoachMessage(userMessage)
-            
-            _isCoachThinking.value = true
-            
-            val profile = activityDao.getUserProfileSync() ?: UserProfile()
-            val logs = nutritionDao.getAllFoodLogs().firstOrNull() ?: emptyList()
-            
-            val todayStr = getCurrentDateString()
-            val todayLogs = logs.filter { it.date == todayStr }
-            
-            val goal = calculateGoal(
-                gender = profile.gender,
-                age = profile.age,
-                weightKg = profile.weightKg,
-                heightCm = profile.heightCm,
-                activityLevel = profile.activityLevel,
-                fitnessGoal = profile.fitnessGoal
-            )
-            
-            val consumedCal = todayLogs.sumOf { it.calories * it.quantity }
-            val consumedProt = todayLogs.sumOf { it.protein * it.quantity }
-            val consumedCarb = todayLogs.sumOf { it.carbs * it.quantity }
-            val consumedFat = todayLogs.sumOf { it.fat * it.quantity }
-            val consumedFib = todayLogs.sumOf { it.fiber * it.quantity }
-            
-            val remainingCal = (goal.calories - consumedCal).coerceAtLeast(0.0)
-            val remainingProt = (goal.protein - consumedProt).coerceAtLeast(0.0)
-            val remainingCarb = (goal.carbs - consumedCarb).coerceAtLeast(0.0)
-            val remainingFat = (goal.fat - consumedFat).coerceAtLeast(0.0)
-            val remainingFib = (25.0 - consumedFib).coerceAtLeast(0.0)
-            
-            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-            val last30Days = (0..29).map { i ->
-                val cal = Calendar.getInstance()
-                cal.add(Calendar.DAY_OF_YEAR, -i)
-                sdf.format(cal.time)
-            }.toSet()
-            val past30DaysLogs = logs.filter { it.date in last30Days }
-            val uniquePastFoods = past30DaysLogs.map { it.foodName }.distinct().take(10).joinToString(", ")
-            
-            val recentMessages = nutritionDao.getAllCoachMessages().firstOrNull()?.takeLast(6) ?: emptyList()
-            val chatHistoryStr = recentMessages.joinToString("\n") { 
-                if (it.sender == "user") "User: ${it.text}" else "Coach: ${it.text}" 
+            _aiParsingState.value = AiParsingState.Loading
+            try {
+                val items = GeminiNutritionParser.parseFoodInput(text)
+                _aiParsingState.value = AiParsingState.Success(items)
+            } catch (e: Exception) {
+                _aiParsingState.value = AiParsingState.Error(e.message ?: "Failed to parse meal input")
             }
-            
-            var replyText = ""
-            
-            if (profile.geminiApiKey.isNotBlank()) {
-                try {
-                    val prompt = buildSystemPrompt(
-                        profile = profile,
-                        goal = goal,
-                        consumedCal = consumedCal,
-                        consumedProt = consumedProt,
-                        consumedCarb = consumedCarb,
-                        consumedFat = consumedFat,
-                        consumedFib = consumedFib,
-                        remainingCal = remainingCal,
-                        remainingProt = remainingProt,
-                        remainingCarb = remainingCarb,
-                        remainingFat = remainingFat,
-                        remainingFib = remainingFib,
-                        uniquePastFoods = uniquePastFoods,
-                        chatHistory = chatHistoryStr,
-                        userQuery = messageText
+        }
+    }
+
+    fun clearAiParsingState() {
+        _aiParsingState.value = AiParsingState.Idle
+    }
+
+    fun logGeminiParsedFoods(mealType: String, items: List<ParsedFoodItem>) {
+        viewModelScope.launch {
+            for (item in items) {
+                nutritionDao.insertFoodLog(
+                    FoodLog(
+                        date = _currentDate.value,
+                        mealType = mealType,
+                        foodName = item.foodName,
+                        calories = item.calories,
+                        protein = item.protein,
+                        carbs = item.carbs,
+                        fat = item.fat,
+                        fiber = item.fiber,
+                        quantity = item.quantity,
+                        servingUnit = item.servingUnit
                     )
-                    
-                    val model = GenerativeModel(
-                        modelName = "gemini-1.5-flash",
-                        apiKey = profile.geminiApiKey
-                    )
-                    val response = model.generateContent(prompt)
-                    replyText = response.text ?: ""
-                } catch (e: Exception) {
-                    replyText = generateOfflineCoachResponse(
-                        query = messageText,
-                        profile = profile,
-                        goal = goal,
-                        consumedCal = consumedCal,
-                        consumedProt = consumedProt,
-                        consumedCarb = consumedCarb,
-                        consumedFat = consumedFat,
-                        consumedFib = consumedFib,
-                        remainingCal = remainingCal,
-                        remainingProt = remainingProt,
-                        remainingCarb = remainingCarb,
-                        remainingFat = remainingFat,
-                        remainingFib = remainingFib,
-                        uniquePastFoods = uniquePastFoods,
-                        errorMsg = "Note: Gemini API failed (${e.localizedMessage})."
-                    )
-                }
-            } else {
-                replyText = generateOfflineCoachResponse(
-                    query = messageText,
-                    profile = profile,
-                    goal = goal,
-                    consumedCal = consumedCal,
-                    consumedProt = consumedProt,
-                    consumedCarb = consumedCarb,
-                    consumedFat = consumedFat,
-                    consumedFib = consumedFib,
-                    remainingCal = remainingCal,
-                    remainingProt = remainingProt,
-                    remainingCarb = remainingCarb,
-                    remainingFat = remainingFat,
-                    remainingFib = remainingFib,
-                    uniquePastFoods = uniquePastFoods
                 )
             }
-            
-            if (replyText.isBlank()) {
-                replyText = "Sorry, I am unable to analyze your request right now. Please try again."
-            }
-            
-            val coachMessage = CoachMessage(
-                timestamp = System.currentTimeMillis(),
-                sender = "coach",
-                text = replyText
-            )
-            nutritionDao.insertCoachMessage(coachMessage)
-            _isCoachThinking.value = false
+            _aiParsingState.value = AiParsingState.Idle
         }
-    }
-
-    private fun buildSystemPrompt(
-        profile: UserProfile,
-        goal: NutritionGoal,
-        consumedCal: Double,
-        consumedProt: Double,
-        consumedCarb: Double,
-        consumedFat: Double,
-        consumedFib: Double,
-        remainingCal: Double,
-        remainingProt: Double,
-        remainingCarb: Double,
-        remainingFat: Double,
-        remainingFib: Double,
-        uniquePastFoods: String,
-        chatHistory: String,
-        userQuery: String
-    ): String {
-        return """
-            You are an intelligent Nutrition Coach integrated into a fitness tracking application.
-            Your primary objective is to help users achieve their fitness goals through personalized nutrition guidance based on their profile, goals, activity levels, food intake history, and dietary preferences.
-            
-            User Context:
-            - Name: ${profile.name}
-            - Age: ${profile.age}
-            - Gender: ${profile.gender}
-            - Height: ${profile.heightCm} cm
-            - Weight: ${profile.weightKg} kg
-            - Fitness Goal: ${profile.fitnessGoal}
-            - Activity Level: ${profile.activityLevel}
-            - Dietary Preference: ${profile.dietaryPreference}
-            - Food Allergies: ${profile.foodAllergies}
-            - Food Dislikes: ${profile.foodDislikes}
-            - Budget Level: ${profile.budget} (student, moderate, premium)
-            - Region: ${profile.region}
-            - Preferred Cuisine: ${profile.preferredCuisine}
-            - Meal Timings: ${profile.mealTimings}
-            - Gym Schedule: ${profile.gymSchedule}
-            - Available Foods at Home: ${profile.availableFoodsAtHome}
-            - Commonly Eaten recently: $uniquePastFoods
-            
-            Daily Nutrition Targets:
-            - Calories Goal: ${goal.calories.toInt()} kcal (Consumed: ${consumedCal.toInt()}, Remaining: ${remainingCal.toInt()})
-            - Protein Goal: ${goal.protein.toInt()} g (Consumed: ${consumedProt.toInt()}, Remaining: ${remainingProt.toInt()})
-            - Carbohydrate Goal: ${goal.carbs.toInt()} g (Consumed: ${consumedCarb.toInt()}, Remaining: ${remainingCarb.toInt()})
-            - Fat Goal: ${goal.fat.toInt()} g (Consumed: ${consumedFat.toInt()}, Remaining: ${remainingFat.toInt()})
-            - Fiber Goal: 25 g (Consumed: ${consumedFib.toInt()}, Remaining: ${remainingFib.toInt()})
-            
-            Safety Rules:
-            - Never provide medical diagnoses, treatment plans, extreme diets, dangerous calorie deficits/surpluses, or eating disorder advice.
-            - If medical advice is required, advise consulting a qualified healthcare professional.
-            
-            Instructions:
-            - Respond to the user's latest message naturally and conversationally, taking the chat history into account.
-            - Use the context provided above to give personalized advice.
-            - Provide specific food or meal recommendations when appropriate, considering the user's macros, budget, and region.
-            - You can use markdown to format your response (e.g., bolding, bullet points, headers).
-            - Do not output a rigidly structured template unless it makes sense for the user's request. Be dynamic, conversational, and directly answer the user's question.
-            
-            Recent Chat History:
-            $chatHistory
-            
-            User's latest message: "$userQuery"
-        """.trimIndent()
-    }
-
-    private fun generateOfflineCoachResponse(
-        query: String,
-        profile: UserProfile,
-        goal: NutritionGoal,
-        consumedCal: Double,
-        consumedProt: Double,
-        consumedCarb: Double,
-        consumedFat: Double,
-        consumedFib: Double,
-        remainingCal: Double,
-        remainingProt: Double,
-        remainingCarb: Double,
-        remainingFat: Double,
-        remainingFib: Double,
-        uniquePastFoods: String,
-        errorMsg: String = ""
-    ): String {
-        val lowercaseQuery = query.lowercase()
-        val isSubstitution = lowercaseQuery.contains("replace") || lowercaseQuery.contains("substitute") || lowercaseQuery.contains("instead of") || lowercaseQuery.contains("alternative") || lowercaseQuery.contains("→")
-        val isProteinCheck = lowercaseQuery.contains("protein") || lowercaseQuery.contains("enough protein") || lowercaseQuery.contains("hit my protein")
-        val isGoalCheck = lowercaseQuery.contains("cutting") || lowercaseQuery.contains("bulking") || lowercaseQuery.contains("bulk") || lowercaseQuery.contains("cut") || lowercaseQuery.contains("goal")
-        val isMealRequest = lowercaseQuery.contains("breakfast") || lowercaseQuery.contains("lunch") || lowercaseQuery.contains("dinner") || lowercaseQuery.contains("snack") || lowercaseQuery.contains("recipe") || lowercaseQuery.contains("meal") || lowercaseQuery.contains("eat tonight")
-
-        val statusText = buildString {
-            if (errorMsg.isNotEmpty()) {
-                append("$errorMsg\n\n")
-            } else if (profile.geminiApiKey.isBlank()) {
-                append("*(Offline Mode: Please add a Gemini API Key in settings for dynamic chat!)*\n\n")
-            }
-            append("You are a ${profile.age}-year-old ${profile.gender} from the ${profile.region} region. ")
-            append("For your goal of **${profile.fitnessGoal}**, your targets are **${goal.calories.toInt()} kcal** and **${goal.protein.toInt()}g protein**. ")
-            append("Today you have consumed **${consumedCal.toInt()} kcal** and **${consumedProt.toInt()}g protein**. ")
-            
-            if (remainingProt > 0.0) {
-                append("You are currently short of your protein goal by **${remainingProt.toInt()}g**. ")
-            } else {
-                append("Awesome! You've met your protein target for today! ")
-            }
-
-            if (isSubstitution) {
-                append("Analyzing your food substitution request to maintain your nutritional targets.")
-            } else if (isProteinCheck) {
-                append("Focusing on optimizing your protein intake density.")
-            } else if (isGoalCheck) {
-                append("Evaluating your meal distributions against your **${profile.fitnessGoal}** guidelines.")
-            } else {
-                append("Providing daily analysis and foods tailored to your **${profile.budget}** budget and **${profile.preferredCuisine}** cuisine.")
-            }
-        }
-
-        val recommendedFoodsText = buildString {
-            val isVeg = profile.dietaryPreference.equals("Vegetarian", ignoreCase = true) || 
-                        profile.dietaryPreference.equals("Vegan", ignoreCase = true) ||
-                        profile.dietaryPreference.equals("Jain Vegetarian", ignoreCase = true)
-            
-            if (isVeg) {
-                append("- **Paneer (Cottage Cheese)** (Serving: 150g):\n")
-                append("  - Calories: 398 kcal, P: 27.5g, C: 9g, F: 31.2g\n")
-                append("  - Reason: Fits your preferred ${profile.preferredCuisine} cuisine, vegetarian preference, and is available at home.\n")
-                
-                append("- **Soy Chunks** (Serving: 50g dry):\n")
-                append("  - Calories: 172 kcal, P: 26g, C: 16.5g, F: 0.2g\n")
-                append("  - Reason: High protein density, extremely student-budget friendly, and quick to cook.\n")
-                
-                append("- **Greek Yogurt** (Serving: 200g):\n")
-                append("  - Calories: 118 kcal, P: 20g, C: 7.2g, F: 0.8g\n")
-                append("  - Reason: Clean, low-fat source of high quality protein and calcium.")
-            } else {
-                append("- **Chicken Breast (Grilled)** (Serving: 150g):\n")
-                append("  - Calories: 247 kcal, P: 46.5g, C: 0g, F: 5.4g\n")
-                append("  - Reason: Extremely lean source of complete protein. Ideal for ${profile.fitnessGoal}.\n")
-                
-                append("- **Egg Whites** (Serving: 4 pieces):\n")
-                append("  - Calories: 68 kcal, P: 14.4g, C: 0.8g, F: 0.4g\n")
-                append("  - Reason: Cheap, low-calorie protein source fitting your moderate budget and gym routine.\n")
-                
-                append("- **Oats** (Serving: 60g):\n")
-                append("  - Calories: 233 kcal, P: 10.1g, C: 39.8g, F: 4.1g\n")
-                append("  - Reason: Great source of energy carbs and fiber to support your workout program.")
-            }
-        }
-
-        val suggestedMealText = buildString {
-            if (isSubstitution) {
-                if (lowercaseQuery.contains("chicken")) {
-                    append("**Tofu / Paneer Rice Bowl (Chicken Alternative)**\n")
-                    append("- Ingredients: 150g Paneer (or 200g Tofu), 150g Cooked Rice, 100g Mixed Vegetables (broccoli/carrots).\n")
-                    append("- Macros: Calories: 550 kcal, Protein: 30g, Carbs: 58g, Fat: 22g, Fiber: 4g\n")
-                    append("- Note: Added paneer to preserve protein intent, though fat content will be slightly higher than chicken.")
-                } else if (lowercaseQuery.contains("milk")) {
-                    append("**Skim Milk Oats (Milk Alternative)**\n")
-                    append("- Ingredients: 50g Oats, 250ml Skim Milk, 1 sliced Banana.\n")
-                    append("- Macros: Calories: 320 kcal, Protein: 14g, Carbs: 58g, Fat: 2g, Fiber: 6g")
-                } else {
-                    append("**Healthy Substitution Plate**\n")
-                    append("- Ingredients: 150g Sweet Potato (instead of white rice), 150g Paneer/Tofu (instead of meat), 1 plate cucumber salad.\n")
-                    append("- Macros: Calories: 490 kcal, Protein: 28g, Carbs: 45g, Fat: 21g, Fiber: 5g")
-                }
-            } else if (isProteinCheck) {
-                append("**High Protein Recovery Meal**\n")
-                append("- Ingredients: 150g Paneer or Chicken, 1 scoop Whey Protein in water, 100g Greek Yogurt.\n")
-                append("- Macros: Calories: 450 kcal, Protein: 58g, Carbs: 9g, Fat: 18g, Fiber: 0g\n")
-                append("- Goal Alignment: Directly targeted to make up for your ${remainingProt.toInt()}g protein deficit.")
-            } else if (lowercaseQuery.contains("breakfast")) {
-                append("**Bulking Oats & Eggs Breakfast**\n")
-                append("- Ingredients: 60g Oats boiled in 200ml Whole Milk, 1 Banana, 2 Scrambled Eggs (or 100g Paneer).\n")
-                append("- Macros: Calories: 580 kcal, Protein: 25g, Carbs: 78g, Fat: 18g, Fiber: 8g")
-            } else if (lowercaseQuery.contains("snack")) {
-                append("**Post-Workout Energy Snack**\n")
-                append("- Ingredients: 1 scoop Whey Protein, 1 medium Apple, 15g Almonds.\n")
-                append("- Macros: Calories: 290 kcal, Protein: 28g, Carbs: 28g, Fat: 10g, Fiber: 5g")
-            } else {
-                if (profile.preferredCuisine.contains("South Indian", ignoreCase = true)) {
-                    append("**High Protein South Indian dinner**\n")
-                    append("- Ingredients: 3 Steamed Idlis, 1 bowl Sambar (with lentils), 150g Paneer Bhurji / egg bhurji.\n")
-                    append("- Macros: Calories: 560 kcal, Protein: 27g, Carbs: 65g, Fat: 21g, Fiber: 6g")
-                } else {
-                    append("**Punjabi Paneer & Roti Dinner**\n")
-                    append("- Ingredients: 150g Paneer Tikka / Bhurji, 2 whole wheat Rotis (chapatis), 1 bowl Dal (Cooked), Salad.\n")
-                    append("- Macros: Calories: 640 kcal, Protein: 32g, Carbs: 68g, Fat: 24g, Fiber: 10g")
-                }
-            }
-        }
-
-        val adviceText = buildString {
-            append("Based on your ${profile.gymSchedule} schedule, stay consistent with eating timings (${profile.mealTimings}). ")
-            if (remainingProt > 15.0) {
-                append("Prioritize protein-dense snacks next to secure your target. ")
-            } else {
-                append("You are in a great position today. Keep your carbohydrate and fat ratios balanced. ")
-            }
-            append("Ensure you drink 3 liters of water and prepare your available home foods (**${profile.availableFoodsAtHome}**) for tomorrow.")
-        }
-
-        return """
-            ### Current Status
-            $statusText
-            
-            ### Remaining Targets
-            - Calories: ${remainingCal.toInt()} kcal
-            - Protein: ${remainingProt.toInt()} g
-            - Carbs: ${remainingCarb.toInt()} g
-            - Fat: ${remainingFat.toInt()} g
-            - Fiber: ${remainingFib.toInt()} g
-            
-            ### Recommended Foods
-            $recommendedFoodsText
-            
-            ### Suggested Meal
-            $suggestedMealText
-            
-            ### Coach's Advice
-            $adviceText
-        """.trimIndent()
     }
 
     companion object {
@@ -1153,12 +922,14 @@ class NutritionViewModel(
 
 class NutritionViewModelFactory(
     private val nutritionDao: NutritionDao,
-    private val activityDao: ActivityDao
+    private val activityDao: ActivityDao,
+    private val bodyMeasurementDao: BodyMeasurementDao
 ) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+    override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
         if (modelClass.isAssignableFrom(NutritionViewModel::class.java)) {
+            val savedStateHandle = extras.createSavedStateHandle()
             @Suppress("UNCHECKED_CAST")
-            return NutritionViewModel(nutritionDao, activityDao) as T
+            return NutritionViewModel(nutritionDao, activityDao, bodyMeasurementDao, savedStateHandle) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

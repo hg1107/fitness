@@ -41,12 +41,27 @@ fun FoodSearchScreen(
     val searchResults by viewModel.searchResults.collectAsState(initial = emptyList())
     val recentFoods by viewModel.recentFoods.collectAsState(initial = emptyList())
     val savedMeals by viewModel.allSavedMeals.collectAsState(initial = emptyList())
+    val foodLimit by viewModel.foodLimit.collectAsState()
 
     var foodToLog by remember { mutableStateOf<FoodItem?>(null) }
     var quantityInput by remember { mutableStateOf("100") }
 
+    var showScanner by remember { mutableStateOf(false) }
+
     LaunchedEffect(query) {
         viewModel.updateSearchQuery(query)
+    }
+
+    if (showScanner) {
+        BarcodeScannerDialog(
+            onDismiss = { showScanner = false },
+            onFoodFound = { item ->
+                viewModel.addScannedFood(item)
+                showScanner = false
+                selectedTab = 0
+                query = item.name
+            }
+        )
     }
 
     Scaffold(
@@ -79,6 +94,11 @@ fun FoodSearchScreen(
                 onValueChange = { query = it },
                 placeholder = { Text("Search foods (rice, oats, paneer...)", color = MediumGray, fontSize = 14.sp) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search", tint = MediumGray) },
+                trailingIcon = {
+                    IconButton(onClick = { showScanner = true }) {
+                        Text("\uD83D\uDCF7", fontSize = 18.sp)
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
                 singleLine = true,
@@ -145,6 +165,20 @@ fun FoodSearchScreen(
                                             }
                                         }
                                     )
+                                }
+                                if (searchResults.size >= foodLimit) {
+                                    item {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 12.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            TextButton(onClick = { viewModel.loadMoreFood() }) {
+                                                Text("Load More", color = White, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

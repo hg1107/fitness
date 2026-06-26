@@ -1,0 +1,68 @@
+﻿Starting a Gradle Daemon, 1 busy and 2 incompatible and 8 stopped Daemons could not be reused, use --status for details
+Calculating task graph as no cached configuration is available for tasks: clean assembleDebug
+.\gradlew : Warning: SDK processing. This version only understands SDK XML versions up to 3 but an SDK XML file of 
+version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were 
+released at different times.
+At line:1 char:1
++ .\gradlew clean assembleDebug 2>&1 | Out-File -FilePath "build_output ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Warning: SDK pr...ifferent times.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+> Task :app:preBuild UP-TO-DATE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:clean
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:generateDebugResources FROM-CACHE
+> Task :app:desugarDebugFileDependencies FROM-CACHE
+> Task :app:extractDeepLinksDebug FROM-CACHE
+> Task :app:javaPreCompileDebug FROM-CACHE
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
+> Task :app:packageDebugResources FROM-CACHE
+> Task :app:validateSigningDebug
+> Task :app:mergeDebugJniLibFolders
+> Task :app:processDebugNavigationResources FROM-CACHE
+> Task :app:compileDebugNavigationResources FROM-CACHE
+> Task :app:parseDebugLocalResources FROM-CACHE
+> Task :app:mapDebugSourceSetPaths
+> Task :app:mergeDebugAssets
+> Task :app:generateDebugRFile FROM-CACHE
+> Task :app:compressDebugAssets FROM-CACHE
+> Task :app:checkDebugDuplicateClasses
+> Task :app:checkDebugAarMetadata
+> Task :app:mergeLibDexDebug FROM-CACHE
+> Task :app:mergeDebugNativeLibs
+
+> Task :app:stripDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so, libbarhopper_v3.so, libimage_processing_util_jni.so, libsurface_util_jni.so. Run with --info option to learn more.
+
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest FROM-CACHE
+> Task :app:processDebugManifestForPackage FROM-CACHE
+> Task :app:mergeDebugResources
+> Task :app:processDebugResources
+> Task :app:kspDebugKotlin
+> Task :app:mergeExtDexDebug
+> Task :app:compileDebugKotlin
+w: file:///C:/Users/harde/OneDrive/Desktop/fitness-master/FitnessTracker/app/src/main/java/com/example/fitnesstracker/data/WorkoutDatabase.kt:424:18 'fun fallbackToDestructiveMigrationFrom(vararg startVersions: Int): RoomDatabase.Builder<WorkoutDatabase>' is deprecated. Replace by overloaded version with parameter to indicate if all tables should be dropped or not.
+w: file:///C:/Users/harde/OneDrive/Desktop/fitness-master/FitnessTracker/app/src/main/java/com/example/fitnesstracker/ui/screens/BarcodeScannerDialog.kt:139:8 Annotation 'androidx.camera.core.ExperimentalGetImage' is not annotated with '@RequiresOptIn'. '@OptIn' has no effect.
+w: file:///C:/Users/harde/OneDrive/Desktop/fitness-master/FitnessTracker/app/src/main/java/com/example/fitnesstracker/ui/screens/FoodSearchScreen.kt:115:13 'fun TabRow(selectedTabIndex: Int, modifier: Modifier = ..., containerColor: Color = ..., contentColor: Color = ..., indicator: ComposableFunction1<List<TabPosition>, Unit> = ..., divider: ComposableFunction0<Unit> = ..., tabs: ComposableFunction0<Unit>): Unit' is deprecated. Replaced with PrimaryTabRow and SecondaryTabRow.
+w: file:///C:/Users/harde/OneDrive/Desktop/fitness-master/FitnessTracker/app/src/main/java/com/example/fitnesstracker/ui/screens/FoodSearchScreen.kt:121:34 'fun Modifier.tabIndicatorOffset(currentTabPosition: TabPosition): Modifier' is deprecated. Solely for use alongside deprecated TabRowDefaults.Indicator method. For recommended PrimaryIndicator and SecondaryIndicator methods, please use TabIndicatorScope.tabIndicatorOffset method.
+w: file:///C:/Users/harde/OneDrive/Desktop/fitness-master/FitnessTracker/app/src/main/java/com/example/fitnesstracker/ui/screens/HistoryScreen.kt:482:44 'fun rememberSwipeToDismissBoxState(initialValue: SwipeToDismissBoxValue = ..., confirmValueChange: (SwipeToDismissBoxValue) -> Boolean = ..., positionalThreshold: (Float) -> Float = ...): SwipeToDismissBoxState' is deprecated. confirmValueChange is deprecated without replacement. Rather than relying on a callback to veto state changes, the anchor set should not include disallowed anchors. See androidx.compose.foundation.samples.AnchoredDraggableDynamicAnchorsSample for an example of using dynamic anchors over confirmValueChange.
+
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes
+> Task :app:dexBuilderDebug
+> Task :app:mergeDebugJavaResource
+> Task :app:mergeDebugGlobalSynthetics
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:assembleDebug
+> Task :app:createDebugApkListingFileRedirect
+
+BUILD SUCCESSFUL in 1m 41s
+38 actionable tasks: 25 executed, 13 from cache
+Configuration cache entry stored.

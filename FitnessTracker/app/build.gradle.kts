@@ -1,25 +1,44 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
   alias(libs.plugins.ksp)
+  alias(libs.plugins.dagger.hilt.android)
 }
 
 android {
     namespace = "com.example.fitnesstracker"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.example.fitnesstracker"
+        applicationId = "com.hg.fitnesstracker"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+
+        val localProps = Properties()
+        val localPropsFile = project.rootProject.file("local.properties")
+        if (localPropsFile.exists()) {
+            val stream = localPropsFile.inputStream()
+            localProps.load(stream)
+            stream.close()
+        }
+        val geminiKey = localProps.getProperty("GEMINI_API_KEY") ?: ""
+        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiKey\"")
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
         }
     }
     compileOptions {
@@ -29,7 +48,7 @@ android {
     buildFeatures {
       compose = true
       aidl = false
-      buildConfig = false
+      buildConfig = true
       shaders = false
     }
 
@@ -38,6 +57,10 @@ android {
         excludes += "/META-INF/{AL2.0,LGPL2.1}"
       }
     }
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 kotlin {
@@ -60,6 +83,7 @@ dependencies {
 
   // Compose
   implementation(libs.androidx.compose.ui)
+  implementation(libs.androidx.compose.ui.text.googlefonts)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.compose.material3)
   // Tooling
@@ -71,6 +95,7 @@ dependencies {
   // Local tests: jUnit, coroutines, Android runner
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation("io.mockk:mockk:1.13.8")
 
   // Instrumented tests: jUnit rules and runners
   androidTestImplementation(libs.androidx.test.core)
@@ -91,6 +116,32 @@ dependencies {
   // Material Icons
   implementation(libs.androidx.compose.material.icons.core)
 
-  // Gemini SDK
+  // Fused location provider for reliable GPS tracking
+  implementation(libs.google.play.services.location)
+
+  // WorkManager for scheduled workout reminders
+  implementation(libs.androidx.work.runtime.ktx)
+
+  // Barcode scanning (CameraX + ML Kit)
+  implementation(libs.androidx.camera.camera2)
+  implementation(libs.androidx.camera.lifecycle)
+  implementation(libs.androidx.camera.view)
+  implementation(libs.mlkit.barcode.scanning)
+
+  // Home screen widget
+  implementation(libs.androidx.glance.appwidget)
+
+  // Health Connect
+  implementation(libs.androidx.health.connect.client)
+
+  // Gson: JSON serialization for saved meals (fix #22)
+  implementation("com.google.code.gson:gson:2.10.1")
+
+  // Dagger Hilt
+  implementation(libs.hilt.android)
+  ksp(libs.hilt.compiler)
+  implementation(libs.hilt.navigation.compose)
+
+  // Generative AI (Gemini)
   implementation(libs.google.generativeai)
 }

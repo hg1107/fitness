@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
@@ -41,28 +42,17 @@ import com.example.fitnesstracker.ui.screens.ActivityDetailScreen
 import com.example.fitnesstracker.ui.screens.OnboardingScreen
 import com.example.fitnesstracker.ui.screens.NutritionScreen
 import com.example.fitnesstracker.ui.screens.FoodSearchScreen
-import com.example.fitnesstracker.ui.screens.AICoachScreen
 import com.example.fitnesstracker.ui.screens.ProfileScreen
+import com.example.fitnesstracker.ui.screens.BodyMeasurementScreen
+import com.example.fitnesstracker.ui.screens.ProgramsScreen
 
 
 @Composable
 fun MainNavigation() {
-  val context = LocalContext.current
-  val database = WorkoutDatabase.getDatabase(context)
-  val workoutDao = database.workoutDao()
-  val activityDao = database.activityDao()
-  val nutritionDao = database.nutritionDao()
-  
-  // Set up view models
-  val workoutViewModel: WorkoutViewModel = viewModel(
-      factory = WorkoutViewModelFactory(workoutDao)
-  )
-  val activityViewModel: ActivityViewModel = viewModel(
-      factory = ActivityViewModelFactory(activityDao, context.applicationContext)
-  )
-  val nutritionViewModel: NutritionViewModel = viewModel(
-      factory = NutritionViewModelFactory(nutritionDao, activityDao)
-  )
+  // Set up view models via Hilt DI
+  val workoutViewModel: WorkoutViewModel = hiltViewModel()
+  val activityViewModel: ActivityViewModel = hiltViewModel()
+  val nutritionViewModel: NutritionViewModel = hiltViewModel()
 
   val userProfileState by nutritionViewModel.userProfile.collectAsState(initial = null)
 
@@ -201,6 +191,7 @@ fun MainNavigation() {
               entry<Dashboard> {
                   DashboardScreen(
                       viewModel = workoutViewModel,
+                      activityViewModel = activityViewModel,
                       onLogExercise = { exerciseName ->
                           backStack.add(LogExercise(exerciseName))
                       },
@@ -259,9 +250,6 @@ fun MainNavigation() {
                       onNavigateToSearch = { mealType ->
                           backStack.add(FoodSearch(mealType))
                       },
-                      onNavigateToCoach = {
-                          backStack.add(AICoach)
-                      },
                       modifier = Modifier.padding(padding)
                   )
               }
@@ -272,15 +260,25 @@ fun MainNavigation() {
                       onNavigateBack = { backStack.removeLastOrNull() }
                   )
               }
-              entry<AICoach> {
-                  AICoachScreen(
+
+              entry<Profile> {
+                  ProfileScreen(
+                      viewModel = nutritionViewModel,
+                      onNavigateBack = { backStack.removeLastOrNull() },
+                      onNavigateToBodyMeasurements = { backStack.add(BodyMeasurements) },
+                      onNavigateToWorkoutPrograms = { backStack.add(WorkoutPrograms) },
+                      modifier = Modifier.padding(padding)
+                  )
+              }
+              entry<BodyMeasurements> {
+                  BodyMeasurementScreen(
                       viewModel = nutritionViewModel,
                       onNavigateBack = { backStack.removeLastOrNull() }
                   )
               }
-              entry<Profile> {
-                  ProfileScreen(
-                      viewModel = nutritionViewModel,
+              entry<WorkoutPrograms> {
+                  ProgramsScreen(
+                      viewModel = workoutViewModel,
                       onNavigateBack = { backStack.removeLastOrNull() }
                   )
               }

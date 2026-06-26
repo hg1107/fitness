@@ -14,7 +14,13 @@ data class PlannedExercise(
     val targetMuscle: String
 )
 
-@Entity(tableName = "workout_sessions")
+@Entity(
+    tableName = "workout_sessions",
+    indices = [
+        Index("timestamp"),
+        Index("exerciseName")
+    ]
+)
 data class WorkoutSession(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val exerciseName: String,
@@ -57,7 +63,7 @@ interface WorkoutDao {
     @Query("SELECT * FROM planned_exercises WHERE dayOfWeek = :dayOfWeek ORDER BY id ASC")
     fun getPlannedExercisesForDay(dayOfWeek: Int): Flow<List<PlannedExercise>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPlannedExercise(plannedExercise: PlannedExercise): Long
 
     @Delete
@@ -65,12 +71,15 @@ interface WorkoutDao {
 
     @Query("DELETE FROM planned_exercises WHERE exerciseName = :name")
     suspend fun deletePlannedExercisesByName(name: String)
+    
+    @Query("DELETE FROM planned_exercises")
+    suspend fun deleteAllPlannedExercises()
 
     // Log Session Queries
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertWorkoutSession(session: WorkoutSession): Long
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertWorkoutSets(sets: List<WorkoutSet>)
 
     @Transaction
@@ -83,6 +92,21 @@ interface WorkoutDao {
     @Transaction
     @Query("SELECT * FROM workout_sessions ORDER BY timestamp DESC")
     fun getAllSessionsWithSets(): Flow<List<SessionWithSets>>
+
+    @Transaction
+    @Query("SELECT * FROM workout_sessions ORDER BY timestamp DESC LIMIT :limit")
+    fun getSessionsWithSetsLimit(limit: Int): Flow<List<SessionWithSets>>
+
+    @Transaction
+    @Query("SELECT * FROM workout_sessions WHERE exerciseName LIKE '%' || :query || '%' ORDER BY timestamp DESC LIMIT :limit")
+    fun getSessionsWithSetsSearchLimit(query: String, limit: Int): Flow<List<SessionWithSets>>
+
+    @Transaction
+    @Query("SELECT * FROM workout_sessions WHERE timestamp >= :since ORDER BY timestamp DESC")
+    fun getSessionsWithSetsSince(since: Long): Flow<List<SessionWithSets>>
+
+    @Query("SELECT timestamp FROM workout_sessions ORDER BY timestamp DESC")
+    fun getAllSessionTimestamps(): Flow<List<Long>>
 
     @Transaction
     @Query("SELECT * FROM workout_sessions WHERE exerciseName = :exerciseName ORDER BY timestamp DESC LIMIT 1")
@@ -169,7 +193,6 @@ data class UserProfile(
     val weightKg: Double = 70.0,
     val heightCm: Double = 175.0,
     val preferredUnits: String = "Metric", // "Metric" or "Imperial"
-    val mapboxToken: String = "",
     val gender: String = "Male",
     val fitnessGoal: String = "Weight Maintenance",
     val activityLevel: String = "Moderately Active",
@@ -184,8 +207,11 @@ data class UserProfile(
     val mealTimings: String = "Breakfast: 8 AM, Lunch: 1:30 PM, Dinner: 8:30 PM",
     val gymSchedule: String = "Mon, Wed, Fri",
     val availableFoodsAtHome: String = "eggs, milk, paneer, oats, banana, rice, roti",
-    val geminiApiKey: String = "",
-    val waterTargetMl: Int = 3000
+    val waterTargetMl: Int = 3000,
+    val customCalories: Double? = null,
+    val customProtein: Double? = null,
+    val customCarbs: Double? = null,
+    val customFat: Double? = null
 )
 
 @Entity(tableName = "food_items")
@@ -204,7 +230,10 @@ data class FoodItem(
     val allergens: String = ""
 )
 
-@Entity(tableName = "food_logs")
+@Entity(
+    tableName = "food_logs",
+    indices = [Index("date")]
+)
 data class FoodLog(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val date: String, // YYYY-MM-DD
@@ -240,12 +269,26 @@ data class WaterLog(
     val amountMl: Int
 )
 
-@Entity(tableName = "coach_messages")
-data class CoachMessage(
+@Entity(
+    tableName = "body_measurements",
+    indices = [Index("date")]
+)
+data class BodyMeasurement(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val timestamp: Long,
-    val sender: String, // "user" or "coach"
-    val text: String
+    val date: String, // YYYY-MM-DD
+    val chestCm: Double? = null,
+    val waistCm: Double? = null,
+    val hipsCm: Double? = null,
+    val armsCm: Double? = null,
+    val thighsCm: Double? = null
+)
+
+@Entity(tableName = "workout_programs")
+data class WorkoutProgram(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val programName: String,
+    val description: String = "",
+    val daysJson: String // JSON string containing days and target exercises
 )
 
 @Dao
@@ -277,6 +320,39 @@ interface ActivityDao {
     @Query("UPDATE activities SET isSynced = 1 WHERE id IN (:ids)")
     suspend fun markActivitiesAsSynced(ids: List<Long>)
 
+    // Transactional insert: saves activity + GPS points atomically.
+    // No orphaned ActivityRecord can exist without its ActivityPoint rows.
+    @Transaction
+    suspend fun saveActivityWithPoints(
+        record: ActivityRecord,
+        points: List<ActivityPoint>
+    ): Long {
+        val id = insertActivity(record)
+        if (points.isNotEmpty()) {
+            insertActivityPoints(points.map { it.copy(activityId = id) })
+        }
+        return id
+    }
+
+    // SQL-level aggregate queries — replace in-memory filtering in ActivityViewModel
+    @Query("SELECT COALESCE(SUM(distanceMeters), 0.0) FROM activities WHERE startTime >= :since")
+    fun getTotalDistanceMetersSince(since: Long): Flow<Double>
+
+    @Query("SELECT COALESCE(SUM(calories), 0.0) FROM activities WHERE startTime >= :since")
+    fun getTotalCaloriesSince(since: Long): Flow<Double>
+
+    @Query("SELECT COUNT(*) FROM activities WHERE startTime >= :since")
+    fun getActivityCountSince(since: Long): Flow<Int>
+
+    @Query("SELECT COALESCE(SUM(durationSeconds), 0) FROM activities WHERE startTime >= :since")
+    fun getTotalDurationSecondsSince(since: Long): Flow<Long>
+
+    @Query("SELECT COUNT(DISTINCT strftime('%Y-%j', startTime / 1000, 'unixepoch')) FROM activities WHERE startTime >= :since")
+    fun getActiveDayCountSince(since: Long): Flow<Int>
+
+    @Query("SELECT COALESCE(SUM(calories), 0.0) FROM activities WHERE startTime >= :startOfDay")
+    fun getTodayCaloriesBurned(startOfDay: Long): Flow<Double>
+
     // User Profile Queries
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUserProfile(profile: UserProfile)
@@ -303,8 +379,14 @@ interface NutritionDao {
     @Query("SELECT * FROM food_items ORDER BY name ASC")
     fun getAllFoodItems(): Flow<List<FoodItem>>
 
-    @Query("SELECT * FROM food_items WHERE name LIKE :query OR name LIKE '%' || :query || '%' ORDER BY name ASC")
+    @Query("SELECT * FROM food_items WHERE name LIKE '%' || :query || '%' ORDER BY name ASC")
     fun searchFoodItems(query: String): Flow<List<FoodItem>>
+
+    @Query("SELECT * FROM food_items ORDER BY name ASC LIMIT :limit")
+    fun getAllFoodItemsLimit(limit: Int): Flow<List<FoodItem>>
+
+    @Query("SELECT * FROM food_items WHERE name LIKE '%' || :query || '%' ORDER BY name ASC LIMIT :limit")
+    fun searchFoodItemsLimit(query: String, limit: Int): Flow<List<FoodItem>>
 
     @Query("SELECT * FROM food_items WHERE name = :name LIMIT 1")
     suspend fun getFoodItemByName(name: String): FoodItem?
@@ -321,8 +403,16 @@ interface NutritionDao {
     @Query("SELECT * FROM food_logs ORDER BY date DESC")
     fun getAllFoodLogs(): Flow<List<FoodLog>>
 
+    // Fix #19: SQL-level weekly filter to avoid full-table scan + in-memory filtering
+    @Query("SELECT * FROM food_logs WHERE date >= :since ORDER BY date DESC")
+    fun getFoodLogsSince(since: String): Flow<List<FoodLog>>
+
     @Query("SELECT * FROM water_logs ORDER BY date DESC")
     fun getAllWaterLogs(): Flow<List<WaterLog>>
+
+    // Fix #19: SQL-level weekly filter for water logs
+    @Query("SELECT * FROM water_logs WHERE date >= :since ORDER BY date DESC")
+    fun getWaterLogsSince(since: String): Flow<List<WaterLog>>
 
     @Query("SELECT DISTINCT foodName FROM food_logs ORDER BY id DESC LIMIT 20")
     fun getRecentFoods(): Flow<List<String>>
@@ -359,21 +449,139 @@ interface NutritionDao {
 
     @Delete
     suspend fun deleteWaterLog(log: WaterLog)
+}
 
+@Dao
+interface BodyMeasurementDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertCoachMessage(message: CoachMessage)
+    suspend fun insertBodyMeasurement(measurement: BodyMeasurement)
 
-    @Query("SELECT * FROM coach_messages ORDER BY timestamp ASC")
-    fun getAllCoachMessages(): Flow<List<CoachMessage>>
+    @Query("SELECT * FROM body_measurements ORDER BY date DESC")
+    fun getAllBodyMeasurements(): Flow<List<BodyMeasurement>>
 
-    @Query("DELETE FROM coach_messages")
-    suspend fun clearAllCoachMessages()
+    @Delete
+    suspend fun deleteBodyMeasurement(measurement: BodyMeasurement)
+}
+
+@Dao
+interface WorkoutProgramDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertWorkoutProgram(program: WorkoutProgram)
+
+    @Query("SELECT * FROM workout_programs ORDER BY id ASC")
+    fun getAllWorkoutPrograms(): Flow<List<WorkoutProgram>>
+
+    @Delete
+    suspend fun deleteWorkoutProgram(program: WorkoutProgram)
 }
 
 // Migration from v5 to v6: adds waterTargetMl column to user_profile
 val MIGRATION_5_6 = object : Migration(5, 6) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE user_profile ADD COLUMN waterTargetMl INTEGER NOT NULL DEFAULT 3000")
+    }
+}
+
+// Migration from v6 to v7: removes API key/token columns and the old coach table.
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS user_profile_new (
+                id TEXT NOT NULL PRIMARY KEY,
+                name TEXT NOT NULL,
+                age INTEGER NOT NULL,
+                weightKg REAL NOT NULL,
+                heightCm REAL NOT NULL,
+                preferredUnits TEXT NOT NULL,
+                gender TEXT NOT NULL,
+                fitnessGoal TEXT NOT NULL,
+                activityLevel TEXT NOT NULL,
+                dietaryPreference TEXT NOT NULL,
+                onboardingComplete INTEGER NOT NULL,
+                foodLikes TEXT NOT NULL,
+                foodDislikes TEXT NOT NULL,
+                foodAllergies TEXT NOT NULL,
+                budget TEXT NOT NULL,
+                region TEXT NOT NULL,
+                preferredCuisine TEXT NOT NULL,
+                mealTimings TEXT NOT NULL,
+                gymSchedule TEXT NOT NULL,
+                availableFoodsAtHome TEXT NOT NULL,
+                waterTargetMl INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO user_profile_new (
+                id, name, age, weightKg, heightCm, preferredUnits, gender,
+                fitnessGoal, activityLevel, dietaryPreference, onboardingComplete,
+                foodLikes, foodDislikes, foodAllergies, budget, region,
+                preferredCuisine, mealTimings, gymSchedule, availableFoodsAtHome,
+                waterTargetMl
+            )
+            SELECT
+                id, name, age, weightKg, heightCm, preferredUnits, gender,
+                fitnessGoal, activityLevel, dietaryPreference, onboardingComplete,
+                foodLikes, foodDislikes, foodAllergies, budget, region,
+                preferredCuisine, mealTimings, gymSchedule, availableFoodsAtHome,
+                waterTargetMl
+            FROM user_profile
+            """.trimIndent()
+        )
+        db.execSQL("DROP TABLE user_profile")
+        db.execSQL("ALTER TABLE user_profile_new RENAME TO user_profile")
+        db.execSQL("DROP TABLE IF EXISTS coach_messages")
+    }
+}
+
+// Migration from v7 to v8: adds custom nutrition targets to user_profile
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE user_profile ADD COLUMN customCalories REAL")
+        db.execSQL("ALTER TABLE user_profile ADD COLUMN customProtein REAL")
+        db.execSQL("ALTER TABLE user_profile ADD COLUMN customCarbs REAL")
+        db.execSQL("ALTER TABLE user_profile ADD COLUMN customFat REAL")
+    }
+}
+
+// Migration from v8 to v9: adds indices to food_logs and workout_sessions
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_food_logs_date` ON `food_logs` (`date`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_workout_sessions_timestamp` ON `workout_sessions` (`timestamp`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_workout_sessions_exerciseName` ON `workout_sessions` (`exerciseName`)")
+    }
+}
+
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `body_measurements` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `date` TEXT NOT NULL,
+                `chestCm` REAL,
+                `waistCm` REAL,
+                `hipsCm` REAL,
+                `armsCm` REAL,
+                `thighsCm` REAL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_body_measurements_date` ON `body_measurements` (`date`)")
+
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `workout_programs` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `programName` TEXT NOT NULL,
+                `description` TEXT NOT NULL DEFAULT '',
+                `daysJson` TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
     }
 }
 
@@ -390,15 +598,18 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
         SavedMeal::class,
         WeightLog::class,
         WaterLog::class,
-        CoachMessage::class
+        BodyMeasurement::class,
+        WorkoutProgram::class
     ],
-    version = 6,
-    exportSchema = false
+    version = 10,
+    exportSchema = true
 )
 abstract class WorkoutDatabase : RoomDatabase() {
     abstract fun workoutDao(): WorkoutDao
     abstract fun activityDao(): ActivityDao
     abstract fun nutritionDao(): NutritionDao
+    abstract fun bodyMeasurementDao(): BodyMeasurementDao
+    abstract fun workoutProgramDao(): WorkoutProgramDao
 
     companion object {
         @Volatile
@@ -411,11 +622,25 @@ abstract class WorkoutDatabase : RoomDatabase() {
                     WorkoutDatabase::class.java,
                     "workout_database"
                 )
-                .addMigrations(MIGRATION_5_6)
-                .fallbackToDestructiveMigration(true) // safety net for unexpected versions
+                // Fix #26: versions 1-4 have no explicit migrations; users on those
+                // versions get a destructive reset. Version 5→6 is safe (addColumn only).
+                .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
+                .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        /** Closes the open instance so the underlying file can be replaced (backup restore). */
+        fun closeAndReset() {
+            synchronized(this) {
+                try {
+                    INSTANCE?.close()
+                } catch (e: Exception) {
+                    com.example.fitnesstracker.util.AppLogger.e("WorkoutDatabase", "Failed to close database", e)
+                }
+                INSTANCE = null
             }
         }
     }

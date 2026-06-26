@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,9 +25,13 @@ import com.example.fitnesstracker.data.ActivityPoint
 import com.example.fitnesstracker.data.ActivityRecord
 import com.example.fitnesstracker.service.LocationPoint
 import com.example.fitnesstracker.ui.ActivityViewModel
+import com.example.fitnesstracker.ui.screens.track.ActivityMapView
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+import com.example.fitnesstracker.util.formatDuration
+import com.example.fitnesstracker.util.formatPace
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,6 +44,7 @@ fun ActivityDetailScreen(
     var points by remember { mutableStateOf<List<ActivityPoint>>(emptyList()) }
     val userProfile by viewModel.userProfile.collectAsState()
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var isDarkMode by remember { mutableStateOf(true) }
 
     LaunchedEffect(activityId) {
         activity = viewModel.getActivityById(activityId)
@@ -56,6 +62,8 @@ fun ActivityDetailScreen(
         ) {
             CircularProgressIndicator(color = StravaOrange)
         }
+        // Note: return is only safe here because this is a full composable tree replacement
+        // (we render a complete Box and return, not an early return mid-composition).
         return
     }
 
@@ -90,6 +98,19 @@ fun ActivityDetailScreen(
                     }
                 },
                 actions = {
+                    val gpxScope = rememberCoroutineScope()
+                    val gpxContext = androidx.compose.ui.platform.LocalContext.current
+                    IconButton(onClick = {
+                        gpxScope.launch {
+                            com.example.fitnesstracker.util.DataExporter.shareActivityGpx(gpxContext, activityId)
+                        }
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Export route as GPX",
+                            tint = BrightText
+                        )
+                    }
                     IconButton(onClick = { showDeleteConfirm = true }) {
                         Icon(
                             imageVector = Icons.Default.Delete,
@@ -136,11 +157,28 @@ fun ActivityDetailScreen(
             ) {
                 if (mapPoints.isNotEmpty()) {
                     ActivityMapView(
-                        mapboxToken = userProfile.mapboxToken,
                         routePoints = mapPoints,
                         currentLocation = null,
+                        isDarkMode = isDarkMode,
+                        fitRouteBounds = true,
                         modifier = Modifier.fillMaxSize()
                     )
+
+                    // Map theme toggle button
+                    IconButton(
+                        onClick = { isDarkMode = !isDarkMode },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp)
+                            .size(36.dp)
+                            .background(SurfaceCard, RoundedCornerShape(50.dp))
+                            .border(1.dp, OutlinedBorder, RoundedCornerShape(50.dp))
+                    ) {
+                        Text(
+                            text = if (isDarkMode) "☀️" else "🌙",
+                            fontSize = 14.sp
+                        )
+                    }
                 } else {
                     Box(
                         modifier = Modifier.fillMaxSize(),

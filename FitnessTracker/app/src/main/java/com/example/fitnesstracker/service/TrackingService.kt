@@ -6,8 +6,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
-import android.location.LocationListener
-import android.location.LocationManager
+import android.os.Looper
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationAvailability
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -42,13 +48,24 @@ data class TrackingState(
 
 class TrackingService : Service() {
 
-    private var locationManager: LocationManager? = null
+    private var fusedLocationClient: FusedLocationProviderClient? = null
     private var serviceJob = Job()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private var timerJob: Job? = null
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     private var weightKg: Double = 70.0 // Default fallback weight
+    // Fix #8: cache preferred units so the notification shows the right distance unit
+    private var preferredUnits: String = "Metric"
+
+    // Set on resume so the distance traveled while paused is not added to the workout
+    private var skipNextDistanceSegment = false
+
+    // Throttle notification updates to avoid Android rate limiting and battery drain
+    private var lastNotificationUpdateMs = 0L
+
+    // Auto-pause: elapsedRealtime of the last detected movement
+    private var lastMovementElapsedMs = 0L
 
     companion object {
         private const val NOTIFICATION_CHANNEL_ID = "tracking_service_channel"
@@ -71,9 +88,14 @@ class TrackingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         createNotificationChannel()
         loadUserWeight()
+        // Fix #4: Reset static state on cold start so stale isTracking=true
+        // from a previous process death cannot cause ghost tracking
+        if (!_trackingState.value.isTracking) {
+            _trackingState.value = TrackingState()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -92,6 +114,20 @@ class TrackingService : Service() {
             }
             ACTION_STOP -> {
                 stopTrackingService()
+            }
+            else -> {
+                // STICKY restart after process death: the intent is null. We must call
+                // startForeground() promptly to avoid ForegroundServiceDidNotStartInTimeException.
+                startForeground(NOTIFICATION_ID, getNotification(_trackingState.value))
+                if (_trackingState.value.isTracking) {
+                    // In-memory state survived (rare): re-attach location updates and timer
+                    requestLocationUpdates()
+                    startTimer()
+                } else {
+                    // State was lost with the process; stop gracefully instead of lingering
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
         return START_STICKY
@@ -114,7 +150,12 @@ class TrackingService : Service() {
     private fun getNotification(state: TrackingState): Notification {
         val title = "${state.activityType} Session"
         val timeFormatted = formatDuration(state.elapsedSeconds)
-        val distFormatted = String.format("%.2f km", state.distanceMeters / 1000.0)
+        // Fix #8: Show distance in the user's preferred unit (km or miles)
+        val distFormatted = if (preferredUnits == "Imperial") {
+            String.format(java.util.Locale.US, "%.2f mi", state.distanceMeters * 0.000621371)
+        } else {
+            String.format(java.util.Locale.US, "%.2f km", state.distanceMeters / 1000.0)
+        }
         val text = "$timeFormatted | $distFormatted | ${state.gpsStatus}"
 
         val intent = Intent(this, MainActivity::class.java).apply {
@@ -137,6 +178,10 @@ class TrackingService : Service() {
     }
 
     private fun updateNotification() {
+        // Android throttles notification updates; refreshing every second also wastes battery.
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastNotificationUpdateMs < 3000L) return
+        lastNotificationUpdateMs = now
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, getNotification(_trackingState.value))
     }
@@ -148,9 +193,11 @@ class TrackingService : Service() {
                 val profile = db.activityDao().getUserProfileSync()
                 if (profile != null) {
                     weightKg = profile.weightKg
+                    // Fix #8: also cache preferred units
+                    preferredUnits = profile.preferredUnits
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.fitnesstracker.util.AppLogger.e("TrackingService", "Failed to load user weight", e)
             }
         }
     }
@@ -165,8 +212,10 @@ class TrackingService : Service() {
                 acquire(10 * 60 * 60 * 1000L) // 10 hours max safety timeout
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.fitnesstracker.util.AppLogger.e("TrackingService", "Failed to acquire WakeLock", e)
         }
+
+        lastMovementElapsedMs = SystemClock.elapsedRealtime()
 
         _trackingState.update {
             it.copy(
@@ -209,29 +258,28 @@ class TrackingService : Service() {
         }
 
         try {
-            locationManager?.requestLocationUpdates(
-                LocationManager.GPS_PROVIDER,
-                3000L, // 3 seconds
-                0f,    // 0 meters
-                locationListener
-            )
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
+                .setMinUpdateIntervalMillis(2000L)
+                .setMinUpdateDistanceMeters(0f)
+                .build()
+            fusedLocationClient?.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
             _trackingState.update { it.copy(gpsStatus = "GPS Connected") }
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.fitnesstracker.util.AppLogger.e("TrackingService", "Failed to request location updates", e)
             _trackingState.update { it.copy(gpsStatus = "GPS Error") }
         }
     }
 
-    private val locationListener = object : LocationListener {
-        override fun onLocationChanged(location: Location) {
+    private val locationCallback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
             if (_trackingState.value.isPaused || !_trackingState.value.isTracking) return
-            handleLocationUpdate(location)
+            result.lastLocation?.let { handleLocationUpdate(it) }
         }
-        override fun onProviderEnabled(provider: String) {
-            _trackingState.update { it.copy(gpsStatus = "GPS Enabled") }
-        }
-        override fun onProviderDisabled(provider: String) {
-            _trackingState.update { it.copy(gpsStatus = "GPS Disabled") }
+
+        override fun onLocationAvailability(availability: LocationAvailability) {
+            if (!availability.isLocationAvailable) {
+                _trackingState.update { it.copy(gpsStatus = "Searching GPS...") }
+            }
         }
     }
 
@@ -250,6 +298,17 @@ class TrackingService : Service() {
         val state = _trackingState.value
         val points = state.routePoints
 
+        // First update after resume: record the point but skip the distance segment,
+        // otherwise the distance traveled while paused would be added to the workout.
+        if (skipNextDistanceSegment && points.isNotEmpty()) {
+            skipNextDistanceSegment = false
+            _trackingState.update {
+                it.copy(routePoints = it.routePoints + currentPoint, gpsStatus = gpsQuality)
+            }
+            return
+        }
+        skipNextDistanceSegment = false
+
         var additionalDistance = 0.0
         var newSpeed = location.speed.toDouble() // m/s from GPS
 
@@ -257,7 +316,7 @@ class TrackingService : Service() {
             val lastPoint = points.last()
             
             // Calculate distance using Haversine formula
-            additionalDistance = calculateHaversine(
+            additionalDistance = com.example.fitnesstracker.util.FitnessMath.calculateHaversine(
                 lastPoint.latitude, lastPoint.longitude,
                 currentPoint.latitude, currentPoint.longitude
             )
@@ -290,6 +349,10 @@ class TrackingService : Service() {
             }
         }
 
+        if (additionalDistance > 0) {
+            lastMovementElapsedMs = SystemClock.elapsedRealtime()
+        }
+
         val newDistance = state.distanceMeters + additionalDistance
         val newPoints = points + currentPoint
 
@@ -318,16 +381,7 @@ class TrackingService : Service() {
         updateNotification()
     }
 
-    private fun calculateHaversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-        val r = 6371000.0 // Earth radius in meters
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-        val a = sin(dLat / 2) * sin(dLat / 2) +
-                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
-                sin(dLon / 2) * sin(dLon / 2)
-        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
-        return r * c
-    }
+
 
     private fun startTimer() {
         timerJob?.cancel()
@@ -335,30 +389,38 @@ class TrackingService : Service() {
             while (isActive) {
                 delay(1000)
                 if (!_trackingState.value.isPaused && _trackingState.value.isTracking) {
-                    _trackingState.update { state ->
-                        val newElapsed = state.elapsedSeconds + 1
-                        val calories = calculateCalories(state.activityType, weightKg, newElapsed)
-                        state.copy(
-                            elapsedSeconds = newElapsed,
-                            calories = calories
-                        )
+                    // Auto-pause: stop accumulating time/calories after 15s without
+                    // movement (e.g. waiting at traffic lights); resumes automatically.
+                    val noMovementMs = SystemClock.elapsedRealtime() - lastMovementElapsedMs
+                    val autoPaused = _trackingState.value.routePoints.isNotEmpty() && noMovementMs > 15_000
+                    if (autoPaused) {
+                        if (_trackingState.value.gpsStatus != "Auto-Paused") {
+                            _trackingState.update {
+                                it.copy(
+                                    gpsStatus = "Auto-Paused",
+                                    currentSpeedMps = 0.0,
+                                    currentPaceSecondsPerKm = 0.0
+                                )
+                            }
+                            updateNotification()
+                        }
+                    } else {
+                        _trackingState.update { state ->
+                            val newElapsed = state.elapsedSeconds + 1
+                            val calories = com.example.fitnesstracker.util.FitnessMath.calculateCaloriesBurned(state.activityType, weightKg, newElapsed)
+                            state.copy(
+                                elapsedSeconds = newElapsed,
+                                calories = calories
+                            )
+                        }
+                        updateNotification()
                     }
-                    updateNotification()
                 }
             }
         }
     }
 
-    private fun calculateCalories(activityType: String, weight: Double, durationSec: Long): Double {
-        val met = when (activityType) {
-            "Walking" -> 3.8
-            "Running" -> 8.0
-            "Cycling" -> 7.5
-            else -> 6.0
-        }
-        val hours = durationSec / 3600.0
-        return met * weight * hours
-    }
+
 
     private fun pauseTracking() {
         _trackingState.update { it.copy(isPaused = true, currentSpeedMps = 0.0, currentPaceSecondsPerKm = 0.0) }
@@ -366,6 +428,7 @@ class TrackingService : Service() {
     }
 
     private fun resumeTracking() {
+        skipNextDistanceSegment = true
         _trackingState.update { it.copy(isPaused = false, gpsStatus = "GPS Resumed") }
         updateNotification()
     }
@@ -377,12 +440,12 @@ class TrackingService : Service() {
                 wakeLock?.release()
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.fitnesstracker.util.AppLogger.e("TrackingService", "Failed to release WakeLock in stopTrackingService", e)
         }
         wakeLock = null
 
         timerJob?.cancel()
-        locationManager?.removeUpdates(locationListener)
+        fusedLocationClient?.removeLocationUpdates(locationCallback)
         
         _trackingState.update {
             it.copy(
@@ -403,13 +466,13 @@ class TrackingService : Service() {
                 wakeLock?.release()
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.fitnesstracker.util.AppLogger.e("TrackingService", "Failed to release WakeLock in onDestroy", e)
         }
         wakeLock = null
 
         timerJob?.cancel()
         serviceJob.cancel()
-        locationManager?.removeUpdates(locationListener)
+        fusedLocationClient?.removeLocationUpdates(locationCallback)
         super.onDestroy()
     }
 
@@ -422,9 +485,9 @@ class TrackingService : Service() {
         val m = (seconds % 3600) / 60
         val s = seconds % 60
         return if (h > 0) {
-            String.format("%d:%02d:%02d", h, m, s)
+            String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, s)
         } else {
-            String.format("%02d:%02d", m, s)
+            String.format(java.util.Locale.US, "%02d:%02d", m, s)
         }
     }
 }

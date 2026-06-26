@@ -6,6 +6,8 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import androidx.lifecycle.viewModelScope
 import com.example.fitnesstracker.data.ActivityDao
 import com.example.fitnesstracker.data.ActivityPoint
@@ -13,13 +15,15 @@ import com.example.fitnesstracker.data.ActivityRecord
 import com.example.fitnesstracker.data.UserProfile
 import com.example.fitnesstracker.service.TrackingService
 import com.example.fitnesstracker.service.TrackingState
+import com.example.fitnesstracker.util.InputValidation
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
-class ActivityViewModel(
+@HiltViewModel
+class ActivityViewModel @Inject constructor(
     private val activityDao: ActivityDao,
-    private val appContext: Context
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
     // Connect directly to the service's companion StateFlow
@@ -105,29 +109,26 @@ class ActivityViewModel(
                 calories = state.calories,
                 avgSpeed = avgSpeed,
                 avgPace = avgPace,
-                notes = notes.trim(),
+                notes = InputValidation.sanitizeNotes(notes, 500),
                 isSynced = false
             )
 
-            // Save Activity and associated points in a transaction flow
-            val activityId = activityDao.insertActivity(record)
-            
-            if (points.isNotEmpty()) {
-                val dbPoints = points.map {
-                    ActivityPoint(
-                        activityId = activityId,
-                        latitude = it.latitude,
-                        longitude = it.longitude,
-                        timestamp = it.timestamp
-                    )
-                }
-                activityDao.insertActivityPoints(dbPoints)
+            val dbPoints = state.routePoints.map {
+                ActivityPoint(
+                    activityId = 0L, // assigned inside the transaction
+                    latitude = it.latitude,
+                    longitude = it.longitude,
+                    timestamp = it.timestamp
+                )
             }
 
-            // Stop service and reset state
+            // Atomic: both inserts succeed or both fail — no orphaned activities
+            val activityId = activityDao.saveActivityWithPoints(record, dbPoints)
+
+            // Stop service and reset state AFTER DB write succeeds
             stopActivity()
             TrackingService.resetState()
-            
+
             onSuccess(activityId)
         }
     }
@@ -145,7 +146,7 @@ class ActivityViewModel(
 
     fun updateActivityNotes(activityId: Long, notes: String) {
         viewModelScope.launch {
-            activityDao.updateActivityNotes(activityId, notes.trim())
+            activityDao.updateActivityNotes(activityId, InputValidation.sanitizeNotes(notes, 500))
         }
     }
 
@@ -163,31 +164,31 @@ class ActivityViewModel(
         age: Int,
         weightKg: Double,
         heightCm: Double,
-        preferredUnits: String,
-        mapboxToken: String
+        preferredUnits: String
     ) {
         viewModelScope.launch {
             val current = activityDao.getUserProfileSync() ?: UserProfile()
+            val sanitizedName = InputValidation.sanitizeName(name, 100)
             val updated = current.copy(
-                name = name.trim().ifEmpty { "Athlete" },
-                age = if (age > 0) age else 30,
-                weightKg = if (weightKg > 0.0) weightKg else 70.0,
-                heightCm = if (heightCm > 0.0) heightCm else 175.0,
-                preferredUnits = preferredUnits.trim().ifEmpty { "Metric" },
-                mapboxToken = mapboxToken.trim()
+                name = if (sanitizedName.isEmpty()) "Athlete" else sanitizedName,
+                age = age.coerceIn(5, 120),
+                weightKg = weightKg.coerceIn(20.0, 300.0),
+                heightCm = heightCm.coerceIn(50.0, 250.0),
+                preferredUnits = preferredUnits.trim().ifEmpty { "Metric" }
             )
             activityDao.insertUserProfile(updated)
         }
     }
 
-    // --- Cloud Sync Simulator ---
+    // --- Cloud Sync (Health Connect) ---
+    // Syncs unsynced activities and latest weight to Health Connect.
+    // No fake delays — shows honest status without simulating a cloud call.
     fun triggerCloudSync() {
         if (_isSyncing.value) return
 
         viewModelScope.launch {
             _isSyncing.value = true
-            _syncMessage.value = "Checking connection..."
-            kotlinx.coroutines.delay(800)
+            _syncMessage.value = "Syncing with Health Connect..."
 
             if (!isOnline(appContext)) {
                 _syncMessage.value = "Offline. Sync postponed."
@@ -197,24 +198,19 @@ class ActivityViewModel(
                 return@launch
             }
 
-            // Retrieve all activities from database that are unsynced
-            val list = allActivities.first().filter { !it.isSynced }
-            if (list.isEmpty()) {
-                _syncMessage.value = "Already up to date."
-                kotlinx.coroutines.delay(1200)
-                _isSyncing.value = false
-                _syncMessage.value = ""
-                return@launch
+            try {
+                val count = com.example.fitnesstracker.util.HealthConnectManager.syncAll(appContext)
+                _syncMessage.value = if (count > 0) {
+                    "Synced $count activit${if (count == 1) "y" else "ies"} to Health Connect."
+                } else {
+                    "Already up to date."
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("ActivityViewModel", "Health Connect sync failed", e)
+                _syncMessage.value = "Sync failed. Check Health Connect permissions."
             }
 
-            _syncMessage.value = "Uploading ${list.size} activities..."
-            kotlinx.coroutines.delay(2000) // Simulate upload latency
-
-            // Mark as synced in DB
-            activityDao.markActivitiesAsSynced(list.map { it.id })
-            _syncMessage.value = "Cloud Sync Complete!"
-            kotlinx.coroutines.delay(1500)
-            
+            kotlinx.coroutines.delay(2000)
             _isSyncing.value = false
             _syncMessage.value = ""
         }
@@ -230,82 +226,89 @@ class ActivityViewModel(
         )
     }
 
-    // --- Analytics Queries ---
-    // Start of the current week (Monday)
+    // --- Analytics Queries (SQL-level, no in-memory filtering) ---
+
     private fun getStartOfWeek(): Long {
         val cal = Calendar.getInstance()
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        cal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+        cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
+        val dow = cal.get(Calendar.DAY_OF_WEEK)
+        val sub = when (dow) { Calendar.MONDAY -> 0; Calendar.TUESDAY -> 1; Calendar.WEDNESDAY -> 2; Calendar.THURSDAY -> 3; Calendar.FRIDAY -> 4; Calendar.SATURDAY -> 5; else -> 6 }
+        cal.add(Calendar.DAY_OF_YEAR, -sub)
         return cal.timeInMillis
     }
 
-    // Start of the current month
     private fun getStartOfMonth(): Long {
         val cal = Calendar.getInstance()
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
+        cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
         cal.set(Calendar.DAY_OF_MONTH, 1)
         return cal.timeInMillis
     }
 
-    // Weekly Summary Aggregation
-    val weeklyDistanceKm: Flow<Double> = allActivities.map { list ->
-        val since = getStartOfWeek()
-        list.filter { it.startTime >= since }.sumOf { it.distanceMeters } / 1000.0
+    private fun getStartOfDay(): Long {
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
     }
 
-    val weeklyWorkoutsCount: Flow<Int> = allActivities.map { list ->
-        val since = getStartOfWeek()
-        list.count { it.startTime >= since }
+    // Reactive start-of-week timestamp that updates when the week rolls over
+    private val weekStartFlow: Flow<Long> = kotlinx.coroutines.flow.flow {
+        while (true) {
+            emit(getStartOfWeek())
+            // Re-emit every 60 seconds so the week boundary is detected promptly
+            kotlinx.coroutines.delay(60_000)
+        }
+    }.distinctUntilChanged()
+
+    private val monthStartFlow: Flow<Long> = kotlinx.coroutines.flow.flow {
+        while (true) {
+            emit(getStartOfMonth())
+            kotlinx.coroutines.delay(60_000)
+        }
+    }.distinctUntilChanged()
+
+    private val dayStartFlow: Flow<Long> = kotlinx.coroutines.flow.flow {
+        while (true) {
+            emit(getStartOfDay())
+            kotlinx.coroutines.delay(60_000)
+        }
+    }.distinctUntilChanged()
+
+    // Weekly Summary — SQL aggregates
+    val weeklyDistanceKm: Flow<Double> = weekStartFlow.flatMapLatest { since ->
+        activityDao.getTotalDistanceMetersSince(since).map { it / 1000.0 }
     }
 
-    val weeklyDurationHours: Flow<Double> = allActivities.map { list ->
-        val since = getStartOfWeek()
-        list.filter { it.startTime >= since }.sumOf { it.durationSeconds } / 3600.0
+    val weeklyWorkoutsCount: Flow<Int> = weekStartFlow.flatMapLatest { since ->
+        activityDao.getActivityCountSince(since)
     }
 
-    val weeklyCaloriesBurned: Flow<Double> = allActivities.map { list ->
-        val since = getStartOfWeek()
-        list.filter { it.startTime >= since }.sumOf { it.calories }
+    val weeklyDurationHours: Flow<Double> = weekStartFlow.flatMapLatest { since ->
+        activityDao.getTotalDurationSecondsSince(since).map { it / 3600.0 }
     }
 
-    // Monthly Summary Aggregation
-    val monthlyDistanceKm: Flow<Double> = allActivities.map { list ->
-        val since = getStartOfMonth()
-        list.filter { it.startTime >= since }.sumOf { it.distanceMeters } / 1000.0
+    val weeklyCaloriesBurned: Flow<Double> = weekStartFlow.flatMapLatest { since ->
+        activityDao.getTotalCaloriesSince(since)
     }
 
-    val monthlyActiveDaysCount: Flow<Int> = allActivities.map { list ->
-        val since = getStartOfMonth()
-        val calendar = Calendar.getInstance()
-        list.filter { it.startTime >= since }
-            .map {
-                calendar.timeInMillis = it.startTime
-                calendar.get(Calendar.DAY_OF_YEAR)
-            }
-            .distinct()
-            .size
+    // Monthly Summary — SQL aggregates
+    val monthlyDistanceKm: Flow<Double> = monthStartFlow.flatMapLatest { since ->
+        activityDao.getTotalDistanceMetersSince(since).map { it / 1000.0 }
     }
 
-    val monthlyCaloriesBurned: Flow<Double> = allActivities.map { list ->
-        val since = getStartOfMonth()
-        list.filter { it.startTime >= since }.sumOf { it.calories }
+    val monthlyActiveDaysCount: Flow<Int> = monthStartFlow.flatMapLatest { since ->
+        activityDao.getActiveDayCountSince(since)
+    }
+
+    val monthlyCaloriesBurned: Flow<Double> = monthStartFlow.flatMapLatest { since ->
+        activityDao.getTotalCaloriesSince(since)
     }
 
     // Today's calories burned (for net calorie integration on Nutrition screen)
-    val todayCaloriesBurned: Flow<Double> = allActivities.map { list ->
-        val cal = java.util.Calendar.getInstance()
-        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        cal.set(java.util.Calendar.MINUTE, 0)
-        cal.set(java.util.Calendar.SECOND, 0)
-        cal.set(java.util.Calendar.MILLISECOND, 0)
-        val startOfDay = cal.timeInMillis
-        list.filter { it.startTime >= startOfDay }.sumOf { it.calories }
+    val todayCaloriesBurned: Flow<Double> = dayStartFlow.flatMapLatest { startOfDay ->
+        activityDao.getTodayCaloriesBurned(startOfDay)
     }
 }
 

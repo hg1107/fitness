@@ -6,6 +6,9 @@ import com.example.fitnesstracker.data.WorkoutDao
 import com.example.fitnesstracker.data.WorkoutSession
 import com.example.fitnesstracker.data.WorkoutSet
 import com.example.fitnesstracker.data.UserProfile
+import com.example.fitnesstracker.data.WorkoutProgram
+import com.example.fitnesstracker.data.WorkoutProgramDao
+import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -26,6 +29,7 @@ import org.junit.Test
 class WorkoutViewModelTest {
 
     private lateinit var fakeDao: FakeWorkoutDao
+    private lateinit var fakeProgramDao: FakeWorkoutProgramDao
     private lateinit var viewModel: WorkoutViewModel
     private val testDispatcher = UnconfinedTestDispatcher()
 
@@ -33,7 +37,8 @@ class WorkoutViewModelTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         fakeDao = FakeWorkoutDao()
-        viewModel = WorkoutViewModel(fakeDao)
+        fakeProgramDao = FakeWorkoutProgramDao()
+        viewModel = WorkoutViewModel(fakeDao, fakeProgramDao, null, SavedStateHandle())
     }
 
     @After
@@ -113,7 +118,7 @@ class WorkoutViewModelTest {
     }
 
     @Test
-    fun testDeleteSessionDeletesPlannedExercise() = runTest {
+    fun testDeleteSessionDoesNotDeletePlannedExercise() = runTest {
         // Given a planned exercise for Wednesday (day 3)
         viewModel.selectDay(3)
         viewModel.addPlannedExercise("Squats", "Legs")
@@ -139,15 +144,31 @@ class WorkoutViewModelTest {
         // When we delete this session
         viewModel.deleteSession(sessionWithSets)
         
-        // Then the planned exercise should also be deleted
+        // Then the planned exercise should still exist
         val plannedAfter = viewModel.plannedExercises.first()
-        assertEquals(0, plannedAfter.size)
+        assertEquals(1, plannedAfter.size)
     }
 }
 
 class FakeWorkoutDao : WorkoutDao {
     val plannedExercises = mutableListOf<PlannedExercise>()
     val sessions = mutableListOf<SessionWithSets>()
+
+    override fun getSessionsWithSetsLimit(limit: Int): Flow<List<SessionWithSets>> = flow {
+        emit(sessions.reversed().take(limit))
+    }
+
+    override fun getSessionsWithSetsSearchLimit(query: String, limit: Int): Flow<List<SessionWithSets>> = flow {
+        emit(sessions.filter { it.session.exerciseName.contains(query, ignoreCase = true) }.reversed().take(limit))
+    }
+
+    override fun getSessionsWithSetsSince(since: Long): Flow<List<SessionWithSets>> = flow {
+        emit(sessions.filter { it.session.timestamp >= since }.reversed())
+    }
+
+    override fun getAllSessionTimestamps(): Flow<List<Long>> = flow {
+        emit(sessions.map { it.session.timestamp }.reversed())
+    }
 
     override fun getPlannedExercisesForDay(dayOfWeek: Int): Flow<List<PlannedExercise>> = flow {
         emit(plannedExercises.filter { it.dayOfWeek == dayOfWeek })
@@ -163,8 +184,20 @@ class FakeWorkoutDao : WorkoutDao {
         plannedExercises.removeIf { it.id == plannedExercise.id }
     }
 
-    override suspend fun deletePlannedExerciseByNameAndDay(name: String, day: Int) {
-        plannedExercises.removeIf { it.exerciseName == name && it.dayOfWeek == day }
+    override suspend fun deletePlannedExercisesByName(name: String) {
+        plannedExercises.removeIf { it.exerciseName == name }
+    }
+
+    override suspend fun deleteAllPlannedExercises() {
+        plannedExercises.clear()
+    }
+
+    override fun getLoggedExerciseNamesSince(since: Long): Flow<List<String>> = flow {
+        emit(sessions.filter { it.session.timestamp >= since }.map { it.session.exerciseName }.distinct())
+    }
+
+    override fun getAllSessionsSince(since: Long): Flow<List<WorkoutSession>> = flow {
+        emit(sessions.filter { it.session.timestamp >= since }.map { it.session })
     }
 
     override suspend fun insertWorkoutSession(session: WorkoutSession): Long {
@@ -236,5 +269,18 @@ class FakeWorkoutDao : WorkoutDao {
             dietaryPreference = "Non-Vegetarian",
             foodAllergies = "None"
         )
+    }
+}
+
+class FakeWorkoutProgramDao : WorkoutProgramDao {
+    val programs = mutableListOf<WorkoutProgram>()
+    override suspend fun insertWorkoutProgram(program: WorkoutProgram) {
+        programs.add(program)
+    }
+    override fun getAllWorkoutPrograms(): Flow<List<WorkoutProgram>> = flow {
+        emit(programs)
+    }
+    override suspend fun deleteWorkoutProgram(program: WorkoutProgram) {
+        programs.removeIf { it.id == program.id }
     }
 }

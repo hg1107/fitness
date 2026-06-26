@@ -24,38 +24,90 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.health.connect.client.PermissionController
 import com.example.fitnesstracker.theme.*
 import com.example.fitnesstracker.ui.NutritionViewModel
+import com.example.fitnesstracker.ui.components.ProgressChartView
+import com.example.fitnesstracker.util.BackupManager
+import com.example.fitnesstracker.util.DataExporter
+import com.example.fitnesstracker.util.HealthConnectManager
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     viewModel: NutritionViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToBodyMeasurements: () -> Unit,
+    onNavigateToWorkoutPrograms: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val userProfileState by viewModel.userProfile.collectAsState(initial = null)
-    val profile = userProfileState ?: return
+    val weightLogs by viewModel.allWeightLogs.collectAsState(initial = emptyList())
+
+    // Fix #1: Never use bare return inside a Composable — show a loading spinner instead
+    if (userProfileState == null) {
+        Scaffold(
+            modifier = modifier,
+            containerColor = Black
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = Color(0xFF00E676))
+            }
+        }
+        return
+    }
+    val profile = userProfileState!!
 
     // Editable state – pre-populated from profile
     var name by remember(profile.id) { mutableStateOf(profile.name) }
     var age by remember(profile.id) { mutableStateOf(profile.age.toString()) }
     var gender by remember(profile.id) { mutableStateOf(profile.gender) }
-    var weightKg by remember(profile.id) { mutableStateOf(profile.weightKg.toString()) }
-    var heightCm by remember(profile.id) { mutableStateOf(profile.heightCm.toString()) }
+    var preferredUnits by remember(profile.id) { mutableStateOf(profile.preferredUnits) }
+    var weightDisplay by remember(profile.id) {
+        val w = if (profile.preferredUnits == "Imperial") profile.weightKg * 2.20462 else profile.weightKg
+        mutableStateOf(String.format(java.util.Locale.US, "%.1f", w))
+    }
+    var heightDisplay by remember(profile.id) {
+        val h = if (profile.preferredUnits == "Imperial") profile.heightCm / 2.54 else profile.heightCm
+        mutableStateOf(String.format(java.util.Locale.US, "%.1f", h))
+    }
     var fitnessGoal by remember(profile.id) { mutableStateOf(profile.fitnessGoal) }
     var activityLevel by remember(profile.id) { mutableStateOf(profile.activityLevel) }
     var dietaryPreference by remember(profile.id) { mutableStateOf(profile.dietaryPreference) }
-    var preferredUnits by remember(profile.id) { mutableStateOf(profile.preferredUnits) }
     var foodLikes by remember(profile.id) { mutableStateOf(profile.foodLikes) }
     var foodDislikes by remember(profile.id) { mutableStateOf(profile.foodDislikes) }
     var foodAllergies by remember(profile.id) { mutableStateOf(profile.foodAllergies) }
     var waterTargetMl by remember(profile.id) { mutableStateOf(profile.waterTargetMl.toString()) }
+    var isCustomGoalsEnabled by remember(profile.id) { mutableStateOf(profile.customCalories != null) }
+    var customCalories by remember(profile.id) { mutableStateOf(profile.customCalories?.toInt()?.toString() ?: "") }
+    var customProtein by remember(profile.id) { mutableStateOf(profile.customProtein?.toInt()?.toString() ?: "") }
+    var customCarbs by remember(profile.id) { mutableStateOf(profile.customCarbs?.toInt()?.toString() ?: "") }
+    var customFat by remember(profile.id) { mutableStateOf(profile.customFat?.toInt()?.toString() ?: "") }
 
     var saveSuccess by remember { mutableStateOf(false) }
+
+    // Fix #10: Auto-dismiss the "Profile saved" banner after 3 seconds
+    LaunchedEffect(saveSuccess) {
+        if (saveSuccess) {
+            kotlinx.coroutines.delay(3000)
+            saveSuccess = false
+        }
+    }
 
     val scrollState = rememberScrollState()
 
     Scaffold(
+        modifier = modifier,
         topBar = {
             TopAppBar(
                 title = {
@@ -72,12 +124,16 @@ fun ProfileScreen(
                 actions = {
                     TextButton(
                         onClick = {
+                            val rawWeight = weightDisplay.toDoubleOrNull() ?: profile.weightKg
+                            val rawHeight = heightDisplay.toDoubleOrNull() ?: profile.heightCm
+                            val savedWeight = if (preferredUnits == "Imperial") rawWeight / 2.20462 else rawWeight
+                            val savedHeight = if (preferredUnits == "Imperial") rawHeight * 2.54 else rawHeight
                             viewModel.updateUserProfile(
                                 name = name,
                                 age = age.toIntOrNull() ?: profile.age,
                                 gender = gender,
-                                weightKg = weightKg.toDoubleOrNull() ?: profile.weightKg,
-                                heightCm = heightCm.toDoubleOrNull() ?: profile.heightCm,
+                                weightKg = savedWeight,
+                                heightCm = savedHeight,
                                 fitnessGoal = fitnessGoal,
                                 activityLevel = activityLevel,
                                 dietaryPreference = dietaryPreference,
@@ -85,7 +141,11 @@ fun ProfileScreen(
                                 foodLikes = foodLikes,
                                 foodDislikes = foodDislikes,
                                 foodAllergies = foodAllergies,
-                                waterTargetMl = waterTargetMl.toIntOrNull() ?: 3000
+                                waterTargetMl = waterTargetMl.toIntOrNull() ?: 3000,
+                                customCalories = if (isCustomGoalsEnabled) customCalories.toDoubleOrNull() else null,
+                                customProtein = if (isCustomGoalsEnabled) customProtein.toDoubleOrNull() else null,
+                                customCarbs = if (isCustomGoalsEnabled) customCarbs.toDoubleOrNull() else null,
+                                customFat = if (isCustomGoalsEnabled) customFat.toDoubleOrNull() else null
                             )
                             saveSuccess = true
                         }
@@ -154,16 +214,16 @@ fun ProfileScreen(
                         modifier = Modifier.weight(1f)
                     )
                     ProfileTextField(
-                        label = "Weight (kg)",
-                        value = weightKg,
-                        onValueChange = { weightKg = it },
+                        label = if (preferredUnits == "Imperial") "Weight (lbs)" else "Weight (kg)",
+                        value = weightDisplay,
+                        onValueChange = { weightDisplay = it },
                         keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f)
                     )
                     ProfileTextField(
-                        label = "Height (cm)",
-                        value = heightCm,
-                        onValueChange = { heightCm = it },
+                        label = if (preferredUnits == "Imperial") "Height (in)" else "Height (cm)",
+                        value = heightDisplay,
+                        onValueChange = { heightDisplay = it },
                         keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f)
                     )
@@ -179,6 +239,50 @@ fun ProfileScreen(
                             onClick = { gender = g }
                         )
                     }
+                }
+
+                // Live BMI indicator based on the values being edited
+                val liveWeightKg = weightDisplay.toDoubleOrNull()?.let { w ->
+                    if (preferredUnits == "Imperial") w / 2.20462 else w
+                }
+                val liveHeightCm = heightDisplay.toDoubleOrNull()?.let { h ->
+                    if (preferredUnits == "Imperial") h * 2.54 else h
+                }
+                val bmi = liveWeightKg?.let { w ->
+                    liveHeightCm?.takeIf { it > 0 }?.let { h ->
+                        w / ((h / 100.0) * (h / 100.0))
+                    }
+                }
+                if (bmi != null) {
+                    val category = when {
+                        bmi < 18.5 -> "Underweight"
+                        bmi < 25.0 -> "Healthy"
+                        bmi < 30.0 -> "Overweight"
+                        else -> "Obese"
+                    }
+                    Text(
+                        text = String.format(java.util.Locale.US, "BMI: %.1f · %s", bmi, category),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF00E676)
+                    )
+                }
+            }
+
+            // Section: Weight Trend
+            if (weightLogs.isNotEmpty()) {
+                val chartPoints = remember(weightLogs, preferredUnits) {
+                    weightLogs.map { log ->
+                        val weightVal = if (preferredUnits == "Imperial") com.example.fitnesstracker.util.UnitConverter.kgToLbs(log.weightKg) else log.weightKg
+                        log.timestamp to weightVal
+                    }
+                }
+                ProfileSection(title = "Weight Trend", icon = Icons.Default.Person) {
+                    ProgressChartView(
+                        points = chartPoints,
+                        valueSuffix = if (preferredUnits == "Imperial") "lbs" else "kg",
+                        lineColor = Color(0xFF00E676)
+                    )
                 }
             }
 
@@ -205,6 +309,62 @@ fun ProfileScreen(
                             isSelected = activityLevel == level,
                             onClick = { activityLevel = level },
                             modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+
+            // Section: Custom Goals
+            ProfileSection(title = "Custom Nutrition Goals", icon = Icons.Default.Edit) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth().clickable { isCustomGoalsEnabled = !isCustomGoalsEnabled }
+                ) {
+                    Text("Enable Custom Goals", color = White, fontSize = 14.sp)
+                    Switch(
+                        checked = isCustomGoalsEnabled,
+                        onCheckedChange = { isCustomGoalsEnabled = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF00E676),
+                            checkedTrackColor = Color(0xFF00E676).copy(alpha = 0.3f),
+                            uncheckedThumbColor = MediumGray,
+                            uncheckedTrackColor = CardGray
+                        )
+                    )
+                }
+
+                if (isCustomGoalsEnabled) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Override your calculated daily targets", fontSize = 11.sp, color = MediumGray)
+                    
+                    ProfileTextField(
+                        label = "Calories (kcal)",
+                        value = customCalories,
+                        onValueChange = { customCalories = it },
+                        keyboardType = KeyboardType.Number
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ProfileTextField(
+                            label = "Protein (g)",
+                            value = customProtein,
+                            onValueChange = { customProtein = it },
+                            keyboardType = KeyboardType.Number,
+                            modifier = Modifier.weight(1f)
+                        )
+                        ProfileTextField(
+                            label = "Carbs (g)",
+                            value = customCarbs,
+                            onValueChange = { customCarbs = it },
+                            keyboardType = KeyboardType.Number,
+                            modifier = Modifier.weight(1f)
+                        )
+                        ProfileTextField(
+                            label = "Fat (g)",
+                            value = customFat,
+                            onValueChange = { customFat = it },
+                            keyboardType = KeyboardType.Number,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
@@ -252,7 +412,20 @@ fun ProfileScreen(
                         ProfileChip(
                             label = unit,
                             isSelected = preferredUnits == unit,
-                            onClick = { preferredUnits = unit }
+                            onClick = {
+                                if (preferredUnits != unit) {
+                                    val currentW = weightDisplay.toDoubleOrNull() ?: 0.0
+                                    val currentH = heightDisplay.toDoubleOrNull() ?: 0.0
+                                    if (unit == "Imperial") {
+                                        weightDisplay = String.format(java.util.Locale.US, "%.1f", currentW * 2.20462)
+                                        heightDisplay = String.format(java.util.Locale.US, "%.1f", currentH / 2.54)
+                                    } else {
+                                        weightDisplay = String.format(java.util.Locale.US, "%.1f", currentW / 2.20462)
+                                        heightDisplay = String.format(java.util.Locale.US, "%.1f", currentH * 2.54)
+                                    }
+                                    preferredUnits = unit
+                                }
+                            }
                         )
                     }
                 }
@@ -265,16 +438,216 @@ fun ProfileScreen(
                 )
             }
 
+            // Section: Data Export
+            val exportContext = LocalContext.current
+            val exportScope = rememberCoroutineScope()
+            ProfileSection(title = "Your Data", icon = Icons.Default.Share) {
+                Text(
+                    "Export your logs as CSV to back them up or analyze them in a spreadsheet.",
+                    fontSize = 12.sp,
+                    color = MediumGray
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedButton(
+                        onClick = { exportScope.launch { DataExporter.shareWorkoutsCsv(exportContext) } },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, BorderGray)
+                    ) { Text("Workouts", fontSize = 12.sp, color = White) }
+                    OutlinedButton(
+                        onClick = { exportScope.launch { DataExporter.shareNutritionCsv(exportContext) } },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, BorderGray)
+                    ) { Text("Nutrition", fontSize = 12.sp, color = White) }
+                    OutlinedButton(
+                        onClick = { exportScope.launch { DataExporter.shareActivitiesCsv(exportContext) } },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, BorderGray)
+                    ) { Text("Cardio", fontSize = 12.sp, color = White) }
+                }
+
+                HorizontalDivider(color = BorderGray, thickness = 1.dp)
+                Text(
+                    "Full backup: save or restore the entire database (all history).",
+                    fontSize = 12.sp,
+                    color = MediumGray
+                )
+                var dataMessage by remember { mutableStateOf("") }
+                var pendingRestoreUri by remember { mutableStateOf<android.net.Uri?>(null) }
+                val backupLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.CreateDocument("application/octet-stream")
+                ) { uri ->
+                    if (uri != null) {
+                        exportScope.launch {
+                            dataMessage = if (BackupManager.backupTo(exportContext, uri)) {
+                                "Backup saved successfully."
+                            } else {
+                                "Backup failed."
+                            }
+                        }
+                    }
+                }
+                val restoreLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.OpenDocument()
+                ) { uri ->
+                    if (uri != null) pendingRestoreUri = uri
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedButton(
+                        onClick = { backupLauncher.launch("fitnesstracker-backup.db") },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, BorderGray)
+                    ) { Text("Backup", fontSize = 12.sp, color = White) }
+                    OutlinedButton(
+                        onClick = { restoreLauncher.launch(arrayOf("*/*")) },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, BorderGray)
+                    ) { Text("Restore", fontSize = 12.sp, color = White) }
+                }
+                if (dataMessage.isNotEmpty()) {
+                    Text(dataMessage, fontSize = 12.sp, color = Color(0xFF00E676))
+                }
+                if (pendingRestoreUri != null) {
+                    AlertDialog(
+                        onDismissRequest = { pendingRestoreUri = null },
+                        containerColor = CardGray,
+                        title = { Text("Restore backup?", color = White, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Text(
+                                "This replaces ALL current data with the backup and restarts the app. This cannot be undone.",
+                                color = LightGray,
+                                fontSize = 13.sp
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                val uri = pendingRestoreUri!!
+                                pendingRestoreUri = null
+                                exportScope.launch {
+                                    if (BackupManager.restoreFrom(exportContext, uri)) {
+                                        BackupManager.restartApp(exportContext)
+                                    } else {
+                                        dataMessage = "Restore failed: invalid backup file."
+                                    }
+                                }
+                            }) { Text("Restore", color = Color(0xFFEF5350), fontWeight = FontWeight.Bold) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { pendingRestoreUri = null }) {
+                                Text("Cancel", color = MediumGray)
+                            }
+                        }
+                    )
+                }
+            }
+
+            // Section: Health Connect
+            ProfileSection(title = "Health Connect", icon = Icons.Default.Favorite) {
+                if (HealthConnectManager.isAvailable(exportContext)) {
+                    var hcMessage by remember { mutableStateOf("") }
+                    val hcPermissionLauncher = rememberLauncherForActivityResult(
+                        PermissionController.createRequestPermissionResultContract()
+                    ) { granted ->
+                        hcMessage = if (granted.containsAll(HealthConnectManager.PERMISSIONS)) {
+                            "Permissions granted. Tap Sync again."
+                        } else {
+                            "Health Connect permissions not granted."
+                        }
+                    }
+                    Text(
+                        "Push your recorded activities and latest weight to Health Connect so other health apps can see them.",
+                        fontSize = 12.sp,
+                        color = MediumGray
+                    )
+                    Button(
+                        onClick = {
+                            exportScope.launch {
+                                if (HealthConnectManager.hasAllPermissions(exportContext)) {
+                                    val count = HealthConnectManager.syncAll(exportContext)
+                                    hcMessage = "Synced $count new activit${if (count == 1) "y" else "ies"} + latest weight."
+                                } else {
+                                    hcPermissionLauncher.launch(HealthConnectManager.PERMISSIONS)
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = White, contentColor = Black),
+                        shape = RoundedCornerShape(10.dp)
+                    ) { Text("Sync to Health Connect", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                    if (hcMessage.isNotEmpty()) {
+                        Text(hcMessage, fontSize = 12.sp, color = Color(0xFF00E676))
+                    }
+                } else {
+                    Text(
+                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                            "Health Connect requires Android 8.0 or newer."
+                        } else {
+                            "Health Connect is not available on this device."
+                        },
+                        fontSize = 12.sp,
+                        color = MediumGray
+                    )
+                }
+            }
+
+            // Section: Extra Features / Logs
+            ProfileSection(title = "More Features", icon = Icons.Default.Star) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = onNavigateToBodyMeasurements,
+                        colors = ButtonDefaults.buttonColors(containerColor = CardGray, contentColor = White),
+                        border = BorderStroke(1.dp, BorderGray),
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF00E676), modifier = Modifier.size(16.dp))
+                            Text("Body Comp", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Button(
+                        onClick = onNavigateToWorkoutPrograms,
+                        colors = ButtonDefaults.buttonColors(containerColor = CardGray, contentColor = White),
+                        border = BorderStroke(1.dp, BorderGray),
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Default.List, contentDescription = null, tint = Color(0xFF00E676), modifier = Modifier.size(16.dp))
+                            Text("Programs", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
             // Full-width save button at bottom
             Spacer(modifier = Modifier.height(4.dp))
             Button(
                 onClick = {
+                    val rawWeight = weightDisplay.toDoubleOrNull() ?: profile.weightKg
+                    val rawHeight = heightDisplay.toDoubleOrNull() ?: profile.heightCm
+                    val savedWeight = if (preferredUnits == "Imperial") rawWeight / 2.20462 else rawWeight
+                    val savedHeight = if (preferredUnits == "Imperial") rawHeight * 2.54 else rawHeight
                     viewModel.updateUserProfile(
                         name = name,
                         age = age.toIntOrNull() ?: profile.age,
                         gender = gender,
-                        weightKg = weightKg.toDoubleOrNull() ?: profile.weightKg,
-                        heightCm = heightCm.toDoubleOrNull() ?: profile.heightCm,
+                        weightKg = savedWeight,
+                        heightCm = savedHeight,
                         fitnessGoal = fitnessGoal,
                         activityLevel = activityLevel,
                         dietaryPreference = dietaryPreference,
@@ -282,7 +655,11 @@ fun ProfileScreen(
                         foodLikes = foodLikes,
                         foodDislikes = foodDislikes,
                         foodAllergies = foodAllergies,
-                        waterTargetMl = waterTargetMl.toIntOrNull() ?: 3000
+                        waterTargetMl = waterTargetMl.toIntOrNull() ?: 3000,
+                        customCalories = if (isCustomGoalsEnabled) customCalories.toDoubleOrNull() else null,
+                        customProtein = if (isCustomGoalsEnabled) customProtein.toDoubleOrNull() else null,
+                        customCarbs = if (isCustomGoalsEnabled) customCarbs.toDoubleOrNull() else null,
+                        customFat = if (isCustomGoalsEnabled) customFat.toDoubleOrNull() else null
                     )
                     saveSuccess = true
                 },
